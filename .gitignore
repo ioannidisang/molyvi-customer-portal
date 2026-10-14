@@ -1,0 +1,7 @@
+briefs/
+customer-materials/
+.env
+.env.*
+node_modules/
+*.sqlite*
+*.key

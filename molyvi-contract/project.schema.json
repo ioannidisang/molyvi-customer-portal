@@ -1,0 +1,1704 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:molyvi:project:1.0.0",
+  "title": "Molyvi local test project preparation 1.0.0",
+  "description": "Preparation records only. Schema validity is not payment verification, production readiness, customer acceptance or authorization to publish. Real customer records and their assets must remain private.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "offerId",
+    "projectId",
+    "mode",
+    "recordStatus",
+    "packageId",
+    "payment",
+    "brand",
+    "photos",
+    "products",
+    "assets"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "offerId": {
+      "const": "molyvi-offer-20261012"
+    },
+    "projectId": {
+      "$ref": "#/$defs/id"
+    },
+    "mode": {
+      "const": "test"
+    },
+    "recordStatus": {
+      "enum": [
+        "draft",
+        "prepared"
+      ],
+      "description": "Prepared means a local preparation snapshot; it does not enable execution."
+    },
+    "packageId": {
+      "enum": [
+        "basic",
+        "extended"
+      ]
+    },
+    "payment": {
+      "$ref": "#/$defs/testPayment"
+    },
+    "brand": {
+      "$ref": "#/$defs/brand"
+    },
+    "business": {
+      "$ref": "#/$defs/business"
+    },
+    "photos": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mix",
+        "instructions"
+      ],
+      "properties": {
+        "mix": {
+          "enum": [
+            "white_1_lifestyle_2",
+            "lifestyle_3",
+            "white_1_lifestyle_4",
+            "lifestyle_5"
+          ]
+        },
+        "instructions": {
+          "type": "string",
+          "maxLength": 8000
+        }
+      }
+    },
+    "products": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/product"
+      },
+      "description": "Catalog entities, distinct from visual work units and SKU rows. No commercial SKU cap or unlimited SKU entitlement is inferred."
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/asset"
+      }
+    },
+    "operations": {
+      "$ref": "#/$defs/operations"
+    },
+    "content": {
+      "$ref": "#/$defs/content"
+    },
+    "legacySource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "recordRef",
+        "sha256",
+        "migrationStatus"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "brief_1_0",
+            "workspace_8"
+          ]
+        },
+        "recordRef": {
+          "$ref": "#/$defs/privateRef"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "migrationStatus": {
+          "const": "manual_review_required"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "packageId": {
+            "const": "basic"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payment": {
+            "properties": {
+              "basePriceMinorExVat": {
+                "const": 19000
+              }
+            }
+          },
+          "photos": {
+            "properties": {
+              "mix": {
+                "enum": [
+                  "white_1_lifestyle_2",
+                  "lifestyle_3"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "payment": {
+            "properties": {
+              "basePriceMinorExVat": {
+                "const": 39900
+              }
+            }
+          },
+          "photos": {
+            "properties": {
+              "mix": {
+                "enum": [
+                  "white_1_lifestyle_4",
+                  "lifestyle_5"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "nullableSha256": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/sha256"
+        }
+      ]
+    },
+    "privateRef": {
+      "type": "string",
+      "pattern": "^(briefs|customer-materials)/[^\\\\]+$",
+      "description": "Workspace-relative private reference only. The consuming validator must reject traversal, absolute paths, unsafe symlinks and references outside the project owner's storage."
+    },
+    "nullablePrivateRef": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/privateRef"
+        }
+      ]
+    },
+    "httpsUrl": {
+      "type": "string",
+      "pattern": "^https://[^\\s]+$",
+      "maxLength": 2048,
+      "description": "Public evidence URL, never a signed/private URL, login secret or permission to fetch."
+    },
+    "nullableHttpsUrl": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/httpsUrl"
+        }
+      ]
+    },
+    "nullableId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/id"
+        }
+      ]
+    },
+    "nullableShortText": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "nullableNonnegativeInteger": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "testPayment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "currency",
+        "basePriceMinorExVat",
+        "testEvidenceRef"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "not_started",
+            "test_verified"
+          ]
+        },
+        "currency": {
+          "const": "EUR"
+        },
+        "basePriceMinorExVat": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Agreed direct base-package target price, excluding VAT and add-ons. Not a payment, invoice total, upgrade price or recognized revenue."
+        },
+        "testEvidenceRef": {
+          "$ref": "#/$defs/nullablePrivateRef"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "test_verified"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "testEvidenceRef": {
+                "$ref": "#/$defs/privateRef"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "testEvidenceRef": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "brand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "logoMode"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "logoMode": {
+          "enum": [
+            "existing",
+            "create",
+            "text"
+          ]
+        },
+        "logoAssetId": {
+          "$ref": "#/$defs/nullableId"
+        },
+        "style": {
+          "enum": [
+            "minimal",
+            "elegant",
+            "natural",
+            "retro",
+            "futuristic",
+            "playful",
+            "unknown",
+            "other"
+          ]
+        },
+        "styleNotes": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "palette": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "primary",
+            "secondary",
+            "accent"
+          ],
+          "properties": {
+            "source": {
+              "enum": [
+                "customer",
+                "logo_proposal",
+                "preset_proposal",
+                "pending"
+              ]
+            },
+            "primary": {
+              "$ref": "#/$defs/nullableColor"
+            },
+            "secondary": {
+              "$ref": "#/$defs/nullableColor"
+            },
+            "accent": {
+              "$ref": "#/$defs/nullableColor"
+            }
+          }
+        }
+      }
+    },
+    "nullableColor": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^#[A-Fa-f0-9]{6}$"
+        }
+      ]
+    },
+    "choice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selected",
+        "other"
+      ],
+      "properties": {
+        "selected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          },
+          "uniqueItems": true
+        },
+        "other": {
+          "type": "string",
+          "maxLength": 8000
+        }
+      },
+      "description": "Choice IDs must be resolved against the versioned questionnaire registry; text is customer input, not executable instructions. Draft permits no selection."
+    },
+    "business": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "country": {
+          "enum": [
+            "GR",
+            null
+          ]
+        },
+        "language": {
+          "const": "el"
+        },
+        "currency": {
+          "const": "EUR"
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "activity": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "audience": {
+          "$ref": "#/$defs/choice"
+        },
+        "differentiators": {
+          "$ref": "#/$defs/choice"
+        },
+        "positioning": {
+          "$ref": "#/$defs/choice"
+        },
+        "merchantDetailsRef": {
+          "$ref": "#/$defs/nullablePrivateRef"
+        },
+        "merchantProfile": {
+          "$ref": "#/$defs/merchantProfile"
+        }
+      },
+      "description": "Initial Greek-language preparation profile. Merchant identity, legal/contact details and addresses live in a private record, never in a public fixture. Language here is a pilot choice, not a restriction on later versions of the offer."
+    },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "description",
+        "category",
+        "improveTitle",
+        "improveDescription",
+        "variants",
+        "visualUnits"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 12000
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "improveTitle": {
+          "type": "boolean"
+        },
+        "improveDescription": {
+          "type": "boolean"
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "variants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/variant"
+          }
+        },
+        "visualUnits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/visualUnit"
+          }
+        }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sku",
+        "color",
+        "size",
+        "priceMinor",
+        "stock",
+        "weightGrams"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "sku": {
+          "$ref": "#/$defs/nullableShortText"
+        },
+        "color": {
+          "$ref": "#/$defs/nullableShortText"
+        },
+        "size": {
+          "$ref": "#/$defs/nullableShortText"
+        },
+        "priceMinor": {
+          "$ref": "#/$defs/nullableNonnegativeInteger"
+        },
+        "stock": {
+          "$ref": "#/$defs/nullableNonnegativeInteger"
+        },
+        "weightGrams": {
+          "$ref": "#/$defs/nullableNonnegativeInteger"
+        }
+      },
+      "description": "Stock and price belong to the SKU/variant. Price is a test catalog amount in EUR minor units; no VAT treatment is inferred. A size may share a visual unit with other sizes."
+    },
+    "visualUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "color",
+        "variantIds",
+        "sourceAssetIds",
+        "representationNote"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "color": {
+          "$ref": "#/$defs/nullableShortText"
+        },
+        "variantIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          },
+          "uniqueItems": true
+        },
+        "sourceAssetIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          },
+          "uniqueItems": true
+        },
+        "representationNote": {
+          "type": "string",
+          "maxLength": 8000
+        }
+      },
+      "description": "One color/required representation with a shared initial photo-slot allowance and shared regeneration counters. The semantic validator counts 10 or 25 included work units from the offer, not variant rows. New depiction/model requires a distinct visual unit; merely changing size does not."
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "availability",
+        "storage",
+        "ref",
+        "sha256",
+        "provenance",
+        "license"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "source_image",
+            "logo",
+            "reference"
+          ]
+        },
+        "availability": {
+          "enum": [
+            "missing",
+            "available"
+          ]
+        },
+        "storage": {
+          "enum": [
+            "private",
+            "public"
+          ]
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/privateRef"
+            },
+            {
+              "$ref": "#/$defs/httpsUrl"
+            }
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/nullableSha256"
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sourceUrl",
+            "recordRef",
+            "notes"
+          ],
+          "properties": {
+            "sourceUrl": {
+              "$ref": "#/$defs/nullableHttpsUrl"
+            },
+            "recordRef": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 1024,
+              "description": "Local provenance evidence reference. Resolve safely, never execute or publicly package private contents."
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 8000
+            }
+          }
+        },
+        "license": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "name",
+            "url"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "pending",
+                "verified"
+              ]
+            },
+            "name": {
+              "$ref": "#/$defs/nullableShortText"
+            },
+            "url": {
+              "$ref": "#/$defs/nullableHttpsUrl"
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "verified"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "availability": {
+                "const": "available"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ref": {
+                "type": "null"
+              },
+              "sha256": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "storage": {
+                "const": "private"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/nullablePrivateRef"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/nullableHttpsUrl"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "operations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shippingPlanRef": {
+          "$ref": "#/$defs/nullablePrivateRef"
+        },
+        "pickupDetailsRef": {
+          "$ref": "#/$defs/nullablePrivateRef"
+        },
+        "paymentsRequested": {
+          "$ref": "#/$defs/choice"
+        },
+        "shopifyPaymentsActivation": {
+          "const": "customer_after_handoff"
+        },
+        "legalInputsRef": {
+          "$ref": "#/$defs/nullablePrivateRef"
+        },
+        "legalReviewStatus": {
+          "enum": [
+            "pending_customer_review",
+            "test_recorded"
+          ]
+        },
+        "withdrawalSetup": {
+          "enum": [
+            "not_selected",
+            "addon_requested",
+            "included_in_extended",
+            "customer_arranged"
+          ]
+        },
+        "deliveryEstimateText": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "shippingPlan": {
+          "$ref": "#/$defs/shippingPlan"
+        },
+        "paymentPlan": {
+          "$ref": "#/$defs/paymentPlan"
+        },
+        "returnsPlan": {
+          "$ref": "#/$defs/returnsPlan"
+        }
+      },
+      "description": "Private referenced documents preserve the merchant's choices while shipping/legal/payment adapter contracts are still pending. test_recorded is not legal certification. Missing sections block the full end-to-end readiness check."
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "aboutBrief": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "contactDetailsRef": {
+          "$ref": "#/$defs/nullablePrivateRef"
+        },
+        "faqBrief": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "policyInputsRef": {
+          "$ref": "#/$defs/nullablePrivateRef"
+        },
+        "blogBrief": {
+          "type": "string",
+          "maxLength": 8000
+        },
+        "policyInputs": {
+          "$ref": "#/$defs/policyInputs"
+        },
+        "pageContent": {
+          "$ref": "#/$defs/pageContent"
+        },
+        "reviewStatus": {
+          "enum": [
+            "pending_customer_review",
+            "test_recorded"
+          ]
+        },
+        "reviewBundleHash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "shippingTime": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "minDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "dayType": {
+          "enum": [
+            null,
+            "business",
+            "calendar"
+          ]
+        }
+      }
+    },
+    "shippingZone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "countries"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "countries": {
+          "type": "array",
+          "maxItems": 249,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$"
+          }
+        },
+        "mode": {
+          "enum": [
+            null,
+            "flat",
+            "free_from_amount",
+            "always_free",
+            "weight_increment",
+            "other"
+          ]
+        },
+        "basePriceMinor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "initialWeightGrams": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "incrementWeightGrams": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "incrementPriceMinor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "freeFromAmountMinor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "freeMaxWeightGrams": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "incrementMode": {
+          "enum": [
+            null,
+            "complete_interval",
+            "started_interval"
+          ]
+        },
+        "other": {
+          "type": "string",
+          "maxLength": 4000
+        }
+      }
+    },
+    "shippingPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "currency",
+        "zones"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "currency": {
+          "const": "EUR"
+        },
+        "packageWeightGrams": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "zones": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/shippingZone"
+          }
+        },
+        "preparationTime": {
+          "$ref": "#/$defs/shippingTime"
+        },
+        "transitTime": {
+          "$ref": "#/$defs/shippingTime"
+        },
+        "pickupRequested": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "merchantProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "country": {
+          "enum": [
+            null,
+            "GR",
+            "other"
+          ]
+        },
+        "countryOther": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "businessType": {
+          "enum": [
+            null,
+            "individual_or_sole_proprietor",
+            "company",
+            "partnership",
+            "other"
+          ]
+        },
+        "businessTypeOther": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "sellerName": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "contactEmail": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "contactPhone": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "address": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "line1": {
+              "type": "string",
+              "maxLength": 240
+            },
+            "line2": {
+              "type": "string",
+              "maxLength": 240
+            },
+            "city": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "postalCode": {
+              "type": "string",
+              "maxLength": 32
+            }
+          }
+        }
+      }
+    },
+    "paymentPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "online": {
+          "enum": [
+            null,
+            "shopify_payments",
+            "manual_only",
+            "other"
+          ]
+        },
+        "manualMethods": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "bank_deposit",
+              "cash_on_delivery"
+            ]
+          }
+        },
+        "additionalMethods": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "klarna",
+              "other"
+            ]
+          }
+        },
+        "other": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "activationAcknowledged": {
+          "type": "boolean"
+        }
+      }
+    },
+    "returnsPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "windowMode": {
+          "enum": [
+            null,
+            "statutory_only",
+            "30_days_total_from_receipt",
+            "60_days_total_from_receipt",
+            "other"
+          ]
+        },
+        "windowDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "windowOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "returnShippingPayer": {
+          "enum": [
+            null,
+            "buyer",
+            "store",
+            "other"
+          ]
+        },
+        "returnShippingPayerOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "returnAddressMode": {
+          "enum": [
+            null,
+            "declared_store_address",
+            "different_address",
+            "other"
+          ]
+        },
+        "returnAddress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "recipient": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "country": {
+              "enum": [
+                null,
+                "AD",
+                "AE",
+                "AF",
+                "AG",
+                "AI",
+                "AL",
+                "AM",
+                "AO",
+                "AQ",
+                "AR",
+                "AS",
+                "AT",
+                "AU",
+                "AW",
+                "AX",
+                "AZ",
+                "BA",
+                "BB",
+                "BD",
+                "BE",
+                "BF",
+                "BG",
+                "BH",
+                "BI",
+                "BJ",
+                "BL",
+                "BM",
+                "BN",
+                "BO",
+                "BQ",
+                "BR",
+                "BS",
+                "BT",
+                "BV",
+                "BW",
+                "BY",
+                "BZ",
+                "CA",
+                "CC",
+                "CD",
+                "CF",
+                "CG",
+                "CH",
+                "CI",
+                "CK",
+                "CL",
+                "CM",
+                "CN",
+                "CO",
+                "CR",
+                "CU",
+                "CV",
+                "CW",
+                "CX",
+                "CY",
+                "CZ",
+                "DE",
+                "DJ",
+                "DK",
+                "DM",
+                "DO",
+                "DZ",
+                "EC",
+                "EE",
+                "EG",
+                "EH",
+                "ER",
+                "ES",
+                "ET",
+                "FI",
+                "FJ",
+                "FK",
+                "FM",
+                "FO",
+                "FR",
+                "GA",
+                "GB",
+                "GD",
+                "GE",
+                "GF",
+                "GG",
+                "GH",
+                "GI",
+                "GL",
+                "GM",
+                "GN",
+                "GP",
+                "GQ",
+                "GR",
+                "GS",
+                "GT",
+                "GU",
+                "GW",
+                "GY",
+                "HK",
+                "HM",
+                "HN",
+                "HR",
+                "HT",
+                "HU",
+                "ID",
+                "IE",
+                "IL",
+                "IM",
+                "IN",
+                "IO",
+                "IQ",
+                "IR",
+                "IS",
+                "IT",
+                "JE",
+                "JM",
+                "JO",
+                "JP",
+                "KE",
+                "KG",
+                "KH",
+                "KI",
+                "KM",
+                "KN",
+                "KP",
+                "KR",
+                "KW",
+                "KY",
+                "KZ",
+                "LA",
+                "LB",
+                "LC",
+                "LI",
+                "LK",
+                "LR",
+                "LS",
+                "LT",
+                "LU",
+                "LV",
+                "LY",
+                "MA",
+                "MC",
+                "MD",
+                "ME",
+                "MF",
+                "MG",
+                "MH",
+                "MK",
+                "ML",
+                "MM",
+                "MN",
+                "MO",
+                "MP",
+                "MQ",
+                "MR",
+                "MS",
+                "MT",
+                "MU",
+                "MV",
+                "MW",
+                "MX",
+                "MY",
+                "MZ",
+                "NA",
+                "NC",
+                "NE",
+                "NF",
+                "NG",
+                "NI",
+                "NL",
+                "NO",
+                "NP",
+                "NR",
+                "NU",
+                "NZ",
+                "OM",
+                "PA",
+                "PE",
+                "PF",
+                "PG",
+                "PH",
+                "PK",
+                "PL",
+                "PM",
+                "PN",
+                "PR",
+                "PS",
+                "PT",
+                "PW",
+                "PY",
+                "QA",
+                "RE",
+                "RO",
+                "RS",
+                "RU",
+                "RW",
+                "SA",
+                "SB",
+                "SC",
+                "SD",
+                "SE",
+                "SG",
+                "SH",
+                "SI",
+                "SJ",
+                "SK",
+                "SL",
+                "SM",
+                "SN",
+                "SO",
+                "SR",
+                "SS",
+                "ST",
+                "SV",
+                "SX",
+                "SY",
+                "SZ",
+                "TC",
+                "TD",
+                "TF",
+                "TG",
+                "TH",
+                "TJ",
+                "TK",
+                "TL",
+                "TM",
+                "TN",
+                "TO",
+                "TR",
+                "TT",
+                "TV",
+                "TW",
+                "TZ",
+                "UA",
+                "UG",
+                "UM",
+                "US",
+                "UY",
+                "UZ",
+                "VA",
+                "VC",
+                "VE",
+                "VG",
+                "VI",
+                "VN",
+                "VU",
+                "WF",
+                "WS",
+                "YE",
+                "YT",
+                "ZA",
+                "ZM",
+                "ZW"
+              ]
+            },
+            "line1": {
+              "type": "string",
+              "maxLength": 240
+            },
+            "line2": {
+              "type": "string",
+              "maxLength": 240
+            },
+            "city": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "postalCode": {
+              "type": "string",
+              "maxLength": 32
+            }
+          }
+        },
+        "returnAddressOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "offersExchanges": {
+          "enum": [
+            null,
+            "yes",
+            "no",
+            "other"
+          ]
+        },
+        "offersExchangesOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "exchangeInboundShippingPayer": {
+          "enum": [
+            null,
+            "buyer",
+            "store",
+            "other"
+          ]
+        },
+        "exchangeInboundShippingPayerOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "exchangeOutboundShippingPayer": {
+          "enum": [
+            null,
+            "buyer",
+            "store",
+            "other"
+          ]
+        },
+        "exchangeOutboundShippingPayerOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "exchangeRequestWindowMode": {
+          "enum": [
+            null,
+            "same_as_declared_returns",
+            "different_days_from_receipt",
+            "other"
+          ]
+        },
+        "exchangeRequestWindowDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 3650
+        },
+        "exchangeRequestWindowOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "exchangeProductScope": {
+          "enum": [
+            null,
+            "same_product_size_or_colour",
+            "also_different_store_product",
+            "other"
+          ]
+        },
+        "exchangeProductScopeOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "exchangePriceDifference": {
+          "enum": [
+            null,
+            "settle_difference",
+            "equal_value_only",
+            "other"
+          ]
+        },
+        "exchangePriceDifferenceOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "exchangeItemCondition": {
+          "enum": [
+            null,
+            "unused_labels_and_original_packaging_where_present",
+            "unused_labels_where_present_no_original_packaging_required",
+            "other"
+          ]
+        },
+        "exchangeItemConditionOther": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "productCharacteristics": {
+          "type": "array",
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "ordinary_goods",
+              "personalised_goods",
+              "perishable_goods",
+              "sealed_hygiene_goods",
+              "digital_content",
+              "other",
+              "unknown"
+            ]
+          }
+        },
+        "productCharacteristicsOther": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "policyInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "analytics": {
+          "enum": [
+            null,
+            "yes",
+            "no",
+            "unknown",
+            "other"
+          ]
+        },
+        "analyticsDetails": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "marketing": {
+          "enum": [
+            null,
+            "yes",
+            "no",
+            "unknown",
+            "other"
+          ]
+        },
+        "marketingDetails": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "serviceProviders": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "retentionCriteria": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "cookieConsent": {
+          "enum": [
+            null,
+            "configured",
+            "not_configured",
+            "unknown",
+            "other"
+          ]
+        },
+        "cookieConsentDetails": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "internationalTransfers": {
+          "enum": [
+            null,
+            "yes",
+            "no",
+            "unknown",
+            "other"
+          ]
+        },
+        "internationalTransferDetails": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "privacyContactEmail": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "additionalPractices": {
+          "type": "string",
+          "maxLength": 3000
+        }
+      }
+    },
+    "pageContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "aboutStory": {
+          "type": "string",
+          "maxLength": 6000
+        },
+        "contactHours": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "faqEntries": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "question": {
+                "type": "string",
+                "maxLength": 300
+              },
+              "answer": {
+                "type": "string",
+                "maxLength": 2000
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "schemaVersion": "1.0.0",
+  "asOf": "2026-10-12",
+  "scope": "Operator-authored preparation snapshot; not a runtime capability probe or customer authorization.",
+  "gates": [
+    {
+      "id": "offer_consumers",
+      "status": "PENDING",
+      "reason": "0.15: τοπικό homepage/qualification, demo snapshot, structured catalog και όρια ανά φωτογραφική μονάδα συνδέθηκαν. Πραγματικό checkout και πλήρης assembler εκκρεμούν.",
+      "source": "docs/MOLYVI-CATALOG-AUTOMATION-20261012.md"
+    },
+    {
+      "id": "service_payment",
+      "status": "PENDING",
+      "reason": "Επιλογή checkout Molyvi και επαληθευμένα test events εκκρεμούν.",
+      "source": "molyvi-growth/paid-workspace-server.mjs"
+    },
+    {
+      "id": "persistent_customer_workspace",
+      "status": "PENDING",
+      "reason": "Αυθεντικοποίηση, βάση και tenant isolation production εκκρεμούν.",
+      "source": "molyvi-growth/lib/task-store.mjs"
+    },
+    {
+      "id": "source_photo_review",
+      "status": "PENDING",
+      "reason": "0.15: τοπικός αυτόματος worker και πραγματικό HTTP αίτημα 3 πηγών PASS ανά φωτογραφική μονάδα. Παραγωγική υποδομή, ευρύτερη αξιολόγηση και πλήρης Basic δοκιμή εκκρεμούν.",
+      "source": "molyvi-growth/lib/product-production-queue.mjs"
+    },
+    {
+      "id": "text_provider",
+      "status": "PENDING",
+      "reason": "0.15: τοπικός αυτόματος worker με πραγματικό HTTP αίτημα τίτλου PASS, 5 AI εκδοχές ανά πεδίο και χειρισμό αλλαγμένων πηγών. Παραγωγική υποδομή και πλήρης Basic δοκιμή εκκρεμούν.",
+      "source": "molyvi-growth/lib/codex-product-provider.mjs"
+    },
+    {
+      "id": "image_provider",
+      "status": "PENDING",
+      "reason": "3 πραγματικά Imagegen outputs εισήχθησαν με hashes/replay. Γενική ουρά παραγωγής/επιστροφής χωρίς χειρισμό συνεδρίας εκκρεμεί.",
+      "source": "molyvi-growth/lib/product-pilot-import.mjs"
+    },
+    {
+      "id": "store_target_and_gateway",
+      "status": "PENDING",
+      "reason": "Επαναβεβαίωση του ήδη εξουσιοδοτημένου development store και test gateway πριν τις νέες εγγραφές.",
+      "source": "docs/DEV-STORE-SETUP.md"
+    },
+    {
+      "id": "shopify_assembler",
+      "status": "PENDING",
+      "reason": "Νέο μοντέλο δεν εφαρμόζεται πλήρως σε theme/catalog/pages/shipping.",
+      "source": "forma-production-kit/scripts/apply-brief.mjs"
+    },
+    {
+      "id": "specialist_and_handoff",
+      "status": "PENDING",
+      "reason": "Οθόνη ειδικού, εξατομικευμένο εγχειρίδιο και cloud παράδοση εκκρεμούν.",
+      "source": "docs/MOLYVI-COMPLETION-STRATEGY-20261012.md"
+    },
+    {
+      "id": "measured_economics",
+      "status": "PENDING",
+      "reason": "Πραγματικό συνολικό κόστος και ενεργός χρόνος ολόκληρου Basic δεν έχουν μετρηθεί.",
+      "source": "docs/MOLYVI-COMPLETION-STRATEGY-20261012.md"
+    },
+    {
+      "id": "shipping_native_application",
+      "status": "PENDING",
+      "reason": "0.16 structured onboarding/quote/export PASS. Native tiers, maximum weight, store readback and real checkout remain pending.",
+      "source": "docs/MOLYVI-SHIPPING-ONBOARDING-20261012.md"
+    },
+    {
+      "id": "merchant_details_native_application",
+      "status": "PENDING",
+      "reason": "0.17: ιδιωτικό merchantProfile συνδέθηκε σε τοπικό onboarding, κοινό validator και εξαγωγή. Ελλιπή drafts και στοιχεία προς έλεγχο παραμένουν διακριτά. Πραγματική εφαρμογή/readback Shopify και παραγωγική υποδομή εκκρεμούν· δεν επιβεβαιώνεται ταυτότητα ή νομική συμμόρφωση.",
+      "source": "molyvi-growth/lib/merchant-payments.mjs"
+    },
+    {
+      "id": "payments_owner_activation",
+      "status": "PENDING",
+      "reason": "0.17: paymentPlan συνδέθηκε σε τοπική εργασία με κλειδωμένη δήλωση πωλητή και εξαγωγή μόνο για προετοιμασία. Η επιλογή μεθόδων δεν επιβεβαιώνει επιλεξιμότητα ή ενεργοποίηση. Owner setup μετά την παράδοση, πραγματικό checkout/payouts και χωριστή είσπραξη υπηρεσίας Molyvi παραμένουν PENDING.",
+      "source": "molyvi-contract/lib/merchant-payments.mjs"
+    },
+    {
+      "id": "store_content_native_application",
+      "status": "PENDING",
+      "reason": "0.18: δομημένες επιστροφές, δηλωμένες πρακτικές απορρήτου, τρεις ενημερωτικές σελίδες και τέσσερα τοπικά προσχέδια συνδέονται με έλεγχο ακριβούς εκδοχής. Νομική καταλληλότητα, εφαρμογή/readback και δημοσίευση στο Shopify παραμένουν προς έλεγχο.",
+      "source": "docs/MOLYVI-STORE-CONTENT-20261012.md"
+    },
+    {
+      "id": "withdrawal_runtime",
+      "status": "PENDING",
+      "reason": "Τα προσχέδια δεν υλοποιούν ηλεκτρονική δήλωση υπαναχώρησης ή επιβεβαίωση σε σταθερό μέσο. Native λειτουργία, ακριβές scope και runtime QA εκκρεμούν ανεξάρτητα από πακέτο.",
+      "source": "docs/MOLYVI-STORE-CONTENT-20261012.md"
+    }
+  ]
+}

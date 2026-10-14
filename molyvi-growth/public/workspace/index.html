@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="el">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Το έργο σου — Molyvi</title><link rel="stylesheet" href="/workspace.css"><script src="/gallery.js" defer></script><script src="/catalog-editor.js" defer></script><script src="/products.js" defer></script><script src="/shipping.js" defer></script><script src="/merchant-payments.js" defer></script><script src="/store-content.js" defer></script><script src="/workspace.js" defer></script></head>
+<body>
+  <header><a href="/" class="brand">Molyvi<span>Το e-shop σου, βήμα βήμα.</span></a><a id="customer-home" href="/customer/" hidden>Τα έργα και τα αρχεία σου</a><span class="preview">Τοπική δοκιμή</span></header>
+  <main>
+    <section id="welcome" class="welcome">
+      <p class="eyebrow">Ο ΧΩΡΟΣ ΤΟΥ ΕΡΓΟΥ ΣΟΥ</p><h1>Ξεκίνα με όσα<br>έχεις έτοιμα.</h1>
+      <p>Αποθήκευσε, επέστρεψε αργότερα ή υπέβαλε οριστικά ένα βήμα για να ξεκινήσουμε. Τα υπόλοιπα μπορούν να περιμένουν.</p>
+      <button id="start">Άνοιγμα δοκιμαστικής παραγγελίας →</button>
+      <section id="service-payment" hidden aria-labelledby="service-heading">
+        <h2 id="service-heading">Η παραγγελία ανοίγει τον δρόμο.</h2>
+        <p id="service-status" role="status">Με την επιβεβαίωση της πληρωμής, ο χώρος του έργου σου ανοίγει αυτόματα.</p>
+        <button id="service-open" type="button">Προετοιμασία δοκιμής Basic →</button>
+        <button id="service-checkout" type="button" hidden>Συνέχεια στη δοκιμαστική αγορά →</button>
+        <p id="service-checkout-link" hidden></p>
+        <form id="service-access-form">
+          <label for="service-access-key">Το προσωπικό κλειδί του έργου σου</label>
+          <input id="service-access-key" type="password" autocomplete="off" spellcheck="false" maxlength="64" aria-describedby="service-key-help">
+          <p id="service-key-help" class="field-help">Φύλαξέ το ιδιωτικά για να επιστρέψεις στο ίδιο έργο. Δεν είναι κωδικός Shopify.</p>
+          <button type="submit">Επιστροφή στο έργο →</button>
+        </form>
+        <p id="service-checkout-note" class="note">Τοπικός έλεγχος σύνδεσης πληρωμής. Το checkout υπηρεσίας δεν έχει συνδεθεί ακόμη και δεν γίνεται χρηματική χρέωση.</p>
+      </section>
+      <p id="demo-note" class="note">Η δοκιμή προσομοιώνει παραγγελία Basic, χωρίς χρηματική χρέωση. Τα αιτήματα αποθηκεύονται τοπικά. Ο χειριστής μπορεί να εκτελέσει την εγκεκριμένη δοκιμή με την υπάρχουσα συνεδρία Pro και να συνδέσει τα πραγματικά αποτελέσματα στο προϊόν. Χρησιμοποίησε εικονικά στοιχεία.</p>
+    </section>
+    <section id="workspace" hidden>
+      <div class="intro"><div><p class="eyebrow">Η ΠΑΡΑΓΓΕΛΙΑ ΣΟΥ</p><h1>Δίνεις την κατεύθυνση.<br>Ξεκινάμε ανά βήμα.</h1></div><p>Όσο πιο καθαρές είναι οι φωτογραφίες και πιο συγκεκριμένες οι πληροφορίες σου, τόσο καλύτερο μπορεί να γίνει το αποτέλεσμα.</p></div>
+      <section id="service-offer" class="credit-wallet" aria-label="Το πακέτο και η πρόοδός σου"></section>
+      <section id="credit-wallet" class="credit-wallet" aria-label="Τα credits σου"></section>
+      <section id="product-production" class="credit-wallet" aria-label="Επεξεργασία προϊόντων" hidden></section>
+      <div class="layout"><aside><p id="progress"></p><nav id="steps" aria-label="Βήματα έργου"></nav><div class="remaining"><h2>Εκκρεμούν</h2><ul id="remaining"></ul></div></aside>
+        <div><article id="card"></article><div id="notice" role="status" aria-live="polite"></div></div>
+      </div>
+    </section>
+  </main>
+  <dialog id="photo-viewer" aria-labelledby="photo-viewer-title"><h2 id="photo-viewer-title"></h2><img id="photo-viewer-image" alt=""><button id="close-viewer" type="button">Επιστροφή στις φωτογραφίες</button></dialog>
+  <dialog id="confirm"><h2 id="confirm-title">Οριστική υποβολή αυτού του βήματος;</h2><p id="confirm-message">Ξεκινάμε την επεξεργασία των στοιχείων του. Δεν θα μπορείς πλέον να αλλάξεις τις απαντήσεις σε αυτό το βήμα. Τα υπόλοιπα βήματα παραμένουν διαθέσιμα.</p><p>Όπου απαιτούνται άλλα στοιχεία ή έγκρισή σου, η αντίστοιχη παραγωγή θα περιμένει αυτά. Οι συμφωνημένες αλλαγές, regenerations και η αναφορά λάθους παραμένουν διαθέσιμες στη διαδικασία παράδοσης.</p><div class="actions"><button id="cancel-confirm" class="secondary">Επιστροφή</button><button id="submit-confirm">Υποβολή & έναρξη</button></div></dialog>
+  <footer>Τοπικό πρωτότυπο · Τα αρχεία αποθηκεύονται ιδιωτικά. Οι έλεγχοι αρχικών φωτογραφιών και τα κείμενα μπορούν να εκτελούνται αυτόματα όταν ο χειριστής ενεργοποιήσει τη δοκιμή Pro. Η δημιουργία εικόνων, η τελική κατασκευή και οι πραγματικές αγορές παραμένουν προς σύνδεση.</footer>
+</body></html>

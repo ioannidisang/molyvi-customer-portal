@@ -1,0 +1,959 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "molyvi-offer-20261012",
+  "asOf": "2026-10-12",
+  "currency": "EUR",
+  "taxBasis": "exclusive_vat",
+  "commercialActivation": false,
+  "status": "agreed_spec_not_integrated",
+  "authority": {
+    "purpose": "Canonical local specification of the latest agreed commercial policies. Historical proposals remain evidence; this file does not activate sales or runtime entitlements.",
+    "priceStatus": "agreed_target_pending_full_cost_validation",
+    "amountEncoding": "Integer minor currency units: 100 = EUR 1.00.",
+    "unknownValue": "null denotes unresolved, except explicitly documented no-expiry timestamps.",
+    "sourcePrecedence": "Latest explicit user agreement overrides older proposals. References identify the decision, not a claim that implementation is complete.",
+    "runtimeIntegration": false,
+    "realPaymentsEnabled": false,
+    "deliveryActionsEnabled": false,
+    "livePublicationEnabled": false
+  },
+  "sourceRefs": {
+    "packages": {
+      "path": "docs/MOLYVI-PRICING-PROPOSAL.md",
+      "section": "Θέματα 97–98 / Operations 7CE–7CF"
+    },
+    "upgrade": {
+      "path": "docs/MOLYVI-PRICING-PROPOSAL.md",
+      "section": "Θέματα 93–99 / Operations 7CA–7CG"
+    },
+    "photo_mix": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7C, θέματα 5/6/17/18"
+    },
+    "photo_versions": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7J και νεότερο 7CW / θέματα 22, 116"
+    },
+    "photo_failure": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7M / θέμα 25"
+    },
+    "photo_claims": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7L, 7BW, 7CU, 7CW / θέματα 24, 89, 113, 116"
+    },
+    "units": {
+      "path": "docs/MOLYVI-PRICING-PROPOSAL.md",
+      "section": "Θέμα 21, υποενότητα Προϊόντα, χρώματα και μεγέθη; νεότερη διευκρίνιση θέματος 23"
+    },
+    "size_reuse": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7K / θέμα 23, κοινές φωτογραφίες και χωριστή καταχώριση παραλλαγών"
+    },
+    "product_input": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7AL–7AN / θέματα 50–52"
+    },
+    "product_text": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7AM / θέμα 51"
+    },
+    "branding": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7R–7V / θέματα 30–34; 7CH–7CI / θέματα 100–101"
+    },
+    "credits": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7H, 7P–7Q / θέματα 12–16, 28–29; 7CJ–7CK, 7CO–7CP / θέματα 102–103, 107–108"
+    },
+    "membership": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7CQ–7CS / θέματα 109–111"
+    },
+    "reserved_credits": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7CT–7CU / θέματα 112–113"
+    },
+    "assistant": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7O / θέμα 27"
+    },
+    "archive": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7W–7AF / θέματα 35–44"
+    },
+    "intake": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7AG–7AK, 7AN / θέματα 45–49, 52"
+    },
+    "payments": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7AP–7AQ / θέματα 54–55"
+    },
+    "shipping": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7AR–7AV / θέματα 56–60, με υπερίσχυση του 7AT/58"
+    },
+    "pages": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BK / θέμα 77"
+    },
+    "blog": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7AX / θέμα 62"
+    },
+    "legal_drafts": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7AY–7BA / θέματα 63–65"
+    },
+    "withdrawal": {
+      "path": "docs/MOLYVI-PRICING-PROPOSAL.md",
+      "section": "Θέματα 67–68· η παλαιότερη πρόταση 66 για δωρεάν ρύθμιση και στα δύο αποσύρεται"
+    },
+    "returns": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BC–7BJ / θέματα 69–76"
+    },
+    "handoff": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BL–7BN / θέματα 78–80"
+    },
+    "signature": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BP / θέμα 82, υπερισχύει του 7BO/81"
+    },
+    "domain": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BQ / θέμα 83"
+    },
+    "timing": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BS / θέμα 85"
+    },
+    "support": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BT / θέμα 86"
+    },
+    "inactivity": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BU / θέμα 87"
+    },
+    "reviews": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BV / θέμα 88"
+    },
+    "cancellation": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7BW–7BZ / θέματα 89–92"
+    },
+    "economics": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7CL, 7CN / θέματα 104, 106"
+    },
+    "asynchronous": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7CM / θέμα 105"
+    },
+    "learning": {
+      "path": "docs/MOLYVI-SERVICE-OPERATIONS.md",
+      "section": "7B και 7BV / ελεγχόμενη βελτίωση prompts και feedback"
+    },
+    "scope": {
+      "path": "docs/MOLYVI-COMPLETION-STRATEGY-20261012.md",
+      "section": "4. Ενεργή εμπορική βάση, 6–8. Αρχιτεκτονική/ροή/φάσεις"
+    },
+    "operating_comparison": {
+      "path": "docs/evidence/shopify-operating-cost-comparison-20261010.json",
+      "section": "accepted scoped illustrative comparison, not universal cost claims"
+    }
+  },
+  "scope": {
+    "brand": "Molyvi",
+    "initialMerchantCountries": [
+      "GR"
+    ],
+    "initialService": "new_simple_ecommerce_store",
+    "excluded": [
+      "existing_store_migration",
+      "erp_integration",
+      "courier_integration",
+      "custom_third_party_payment_provider_setup"
+    ],
+    "merchantLegalFormRestriction": "No Molyvi business-only restriction; eligibility follows applicable Shopify/provider requirements and customer compliance.",
+    "merchantComplianceOwner": "customer",
+    "guaranteedMarketShare": null,
+    "sourceIds": [
+      "scope",
+      "payments"
+    ]
+  },
+  "packages": {
+    "basic": {
+      "id": "basic",
+      "displayName": "Basic",
+      "priceMinor": 19000,
+      "catalogUnitsIncluded": 10,
+      "photoSlotsPerUnit": 3,
+      "photoSlotsIncluded": 30,
+      "photoMixIds": [
+        "white_1_lifestyle_2",
+        "lifestyle_3"
+      ],
+      "shipping": {
+        "destinationCountryCount": 1,
+        "destinationZoneCountMax": 1,
+        "modes": [
+          "flat",
+          "free_from_amount",
+          "always_free"
+        ],
+        "weightIncrementIncluded": false,
+        "freeShippingWeightCapIncluded": false
+      },
+      "blog": {
+        "included": false,
+        "articlesIncluded": 0
+      },
+      "molyviSignatureRemovalIncluded": false,
+      "withdrawalSetupIncluded": false,
+      "sourceIds": [
+        "packages",
+        "photo_mix",
+        "shipping",
+        "blog",
+        "signature",
+        "withdrawal"
+      ]
+    },
+    "extended": {
+      "id": "extended",
+      "displayName": null,
+      "priceMinor": 39900,
+      "catalogUnitsIncluded": 25,
+      "photoSlotsPerUnit": 5,
+      "photoSlotsIncluded": 125,
+      "photoMixIds": [
+        "white_1_lifestyle_4",
+        "lifestyle_5"
+      ],
+      "shipping": {
+        "destinationCountryCount": null,
+        "destinationZoneCountMax": 3,
+        "modes": [
+          "flat",
+          "free_from_amount",
+          "always_free",
+          "weight_increment"
+        ],
+        "weightIncrementIncluded": true,
+        "freeShippingWeightCapIncluded": true
+      },
+      "blog": {
+        "included": true,
+        "articlesIncluded": 3,
+        "wordsPerArticleMin": 500,
+        "wordsPerArticleMax": 700,
+        "additionalRewritesPerArticle": 1,
+        "approvedImagesOnly": true
+      },
+      "molyviSignatureRemovalIncluded": true,
+      "withdrawalSetupIncluded": true,
+      "sourceIds": [
+        "packages",
+        "photo_mix",
+        "shipping",
+        "blog",
+        "signature",
+        "withdrawal"
+      ]
+    }
+  },
+  "chargeUnits": {
+    "commercialUnitField": "packages.*.catalogUnitsIncluded",
+    "commercialUnitDefinition": "One included product-work-unit with a distinct product/color and any separately required depiction/model. This is the operational mapping of the agreed product allowance; it is not a Shopify product-row or SKU count.",
+    "differentColor": "Separate visual work-unit even when represented as a variant of one Shopify product.",
+    "sharedSizePhotographs": "Sizes sharing the same depiction/model reuse the same visual unit, slots, selected assets and regeneration counters; no new photographic debit.",
+    "differentDepictionOrModel": "A genuinely required separate size depiction or adult/child model creates a separate visual work-unit. Clarify an ambiguous need before quote or production.",
+    "catalogProduct": "A merchandising entry that may contain multiple variants and visual units. Do not split Shopify products solely to match billing units.",
+    "sku": "A stock/price variant record. Track independently from catalog products and photo work-units.",
+    "textAllowanceUnit": "Catalog product entry and field (title or description), not each SKU or automatically each color visual unit.",
+    "maxSkuPerCatalogProduct": null,
+    "maxSkuPerProject": null,
+    "maxVisualUnitsPerCatalogProduct": null,
+    "maxShopifyProductEntities": null,
+    "unresolvedLimitBehavior": "Null caps are not unlimited entitlements. A pilot may specify an explicit test scope; broader commercial limits require a decision before sale.",
+    "photoSlot": "One final selected output with a stable slot ID and shot role; all generations of the slot share its entitlement.",
+    "example": {
+      "description": "One shirt, two colors, three sizes per color; common photographs across sizes.",
+      "commercialUnits": 2,
+      "possibleCatalogProducts": 1,
+      "skuCount": 6,
+      "basicPhotoSlots": 6,
+      "independentRegenerationCounters": 6
+    },
+    "countersKeptSeparate": [
+      "catalog_product_entries",
+      "sku_entries",
+      "commercial_visual_work_units",
+      "final_photo_slots",
+      "delivered_versions",
+      "provider_attempts",
+      "actual_cost",
+      "customer_credits"
+    ],
+    "sourceIds": [
+      "units",
+      "size_reuse",
+      "photo_mix",
+      "product_text"
+    ]
+  },
+  "photoMixes": {
+    "white_1_lifestyle_2": {
+      "roles": [
+        "white_catalog",
+        "lifestyle_1",
+        "lifestyle_2"
+      ]
+    },
+    "lifestyle_3": {
+      "roles": [
+        "lifestyle_1",
+        "lifestyle_2",
+        "lifestyle_3"
+      ]
+    },
+    "white_1_lifestyle_4": {
+      "roles": [
+        "white_catalog",
+        "lifestyle_1",
+        "lifestyle_2",
+        "lifestyle_3",
+        "lifestyle_4"
+      ]
+    },
+    "lifestyle_5": {
+      "roles": [
+        "lifestyle_1",
+        "lifestyle_2",
+        "lifestyle_3",
+        "lifestyle_4",
+        "lifestyle_5"
+      ]
+    }
+  },
+  "photoPolicy": {
+    "editingRequiresOptIn": true,
+    "photoMixScope": "one_choice_per_package_batch",
+    "perProductMixOverrides": false,
+    "additionalRegenerationsPerSlot": 3,
+    "maxVersionsPerSlot": 4,
+    "onDemandOnly": true,
+    "reasonRequired": false,
+    "aiApprovalRequiredForRegeneration": false,
+    "generationModes": [
+      "same_style",
+      "specific_change"
+    ],
+    "originalReferencesRetained": true,
+    "keepAllGeneratedVersions": true,
+    "selectPreviousVersionCreditCost": 0,
+    "selectPreviousVersionResetsAllowance": false,
+    "sampleConsumesExistingSlot": true,
+    "upgradeResetsAllowance": false,
+    "unusedIncludedPhotoEntitlementCarryover": null,
+    "newColorIsRegeneration": false,
+    "technicalFailureWithoutOutput": {
+      "consumeCustomerCredits": false,
+      "consumeRegeneration": false,
+      "automaticRetriesMax": 2,
+      "totalAttemptsMax": 3,
+      "ambiguousProviderOutcome": "Pause and reconcile before retry; never blindly repeat an unknown execution.",
+      "costOwner": "molyvi"
+    },
+    "claims": {
+      "trigger": "customer_reports_material_product_difference",
+      "routineFidelityReviewRequiredForEveryOutput": false,
+      "regenerationsMustBeExhausted": false,
+      "confirmingReviewsRequired": 2,
+      "uncertainOrConflictingReviews": "specialist_or_more_evidence",
+      "noMaterialDifference": "explain_with_evidence_and_offer_specialist_escalation",
+      "confirmedPaidResult": "Restore only actual net credits debited and not already restored, once.",
+      "confirmedIncludedResult": "Restore the specific affected entitlement; do not invent credits, reset the whole slot, or cancel the purchase.",
+      "replacementGeneration": "Customer requests the restored right; a complaint or refund does not automatically generate another image.",
+      "automaticPurchaseCancellation": false,
+      "customerVerdictTrusted": false
+    },
+    "baseOutputUpperBounds": {
+      "basic": 120,
+      "extended": 500,
+      "excludes": [
+        "technical_retries",
+        "confirmed_fault_remedies"
+      ]
+    },
+    "sourceIds": [
+      "photo_mix",
+      "photo_versions",
+      "photo_failure",
+      "photo_claims",
+      "asynchronous"
+    ]
+  },
+  "textPolicy": {
+    "fields": [
+      "title",
+      "description"
+    ],
+    "aiVersionsPerField": 5,
+    "customerOriginalRetained": true,
+    "onDemandOptInPerField": true,
+    "generateAllFiveAutomatically": false,
+    "selectPreviousVersionCreditCost": 0,
+    "limitResetsOnSaveOrDelete": false,
+    "customerFactsRequired": true,
+    "inventProductFacts": false,
+    "seoGeoOptimization": "Improve clarity and structured product copy without ranking or AI-answer placement guarantees.",
+    "sourceIds": [
+      "product_text",
+      "product_input"
+    ]
+  },
+  "sharedDeliverables": {
+    "appearance": "Configured supported storefront appearance and structure.",
+    "informationalPageIds": [
+      "about",
+      "contact",
+      "faq"
+    ],
+    "informationalPagesIncluded": 3,
+    "legalDraftIds": [
+      "terms",
+      "privacy",
+      "returns",
+      "shipping"
+    ],
+    "legalDraftsCountAgainstInformationalPages": false,
+    "coreStoreStructureCountsAgainstInformationalPages": false,
+    "customerAddsFurtherProductsIndependently": true,
+    "legalDraftCountry": "GR",
+    "legalDraftStatus": "draft_for_customer_review",
+    "legalDraftMethod": "Versioned, appropriately licensed/officially sourced country templates populated from actual onboarding facts; no guarantee created by paraphrasing another store.",
+    "finalLegalSuitabilityOwner": "customer",
+    "sourceIds": [
+      "pages",
+      "legal_drafts",
+      "returns",
+      "scope"
+    ]
+  },
+  "addOns": {
+    "branding": {
+      "id": "branding",
+      "initialPriceMinor": 3900,
+      "laterPriceMinor": 5900,
+      "initialPriceAvailableUntil": "branding_final_submit",
+      "alreadyPurchasedPricePreserved": true,
+      "initialConcepts": 3,
+      "conceptsSelected": 1,
+      "consolidatedRevisionRounds": 1,
+      "deliverables": [
+        "final_logo",
+        "transparent_png_logo",
+        "square_social_version",
+        "favicon",
+        "color_palette",
+        "font_choices",
+        "brand_usage_guide",
+        "delivery_folder",
+        "apply_to_store"
+      ],
+      "newDirectionRequiresSeparateAcceptedQuote": true,
+      "extraDirectionPriceMinor": null,
+      "exactExportSizes": null,
+      "fontLicensePackaging": null,
+      "sourceIds": [
+        "branding"
+      ]
+    },
+    "credits": {
+      "id": "one_time_credits",
+      "quantity": null,
+      "initialPriceMinor": 990,
+      "activeMemberPriceMinor": 1190,
+      "standardPriceMinor": 1490,
+      "initialOfferLimitPerStore": 1,
+      "initialOfferWindow": "initial_construction_order",
+      "upgradeCreatesNewInitialOffer": false,
+      "sameQuantityAndQualityAtEveryPrice": true,
+      "priceSelection": "lowest_eligible_price",
+      "stackDiscounts": false,
+      "expiresAt": null,
+      "expiryMeaning": "Purchased credits do not expire.",
+      "membershipRequiredToUse": false,
+      "sourceIds": [
+        "credits"
+      ]
+    },
+    "archiveExtension": {
+      "id": "archive_extension",
+      "priceMinor": 990,
+      "yearsAdded": 1,
+      "storageBytesMax": 5000000000,
+      "unit": "per_store",
+      "scope": "Snapshot of all already-stored customer-visible files/versions/conversations of that store within the limit.",
+      "futureUploadsAutomaticallyCovered": false,
+      "expiryBase": "each_covered_record_previous_expiry",
+      "recurring": false,
+      "includesCredits": false,
+      "overflow": "Offer separately costed full coverage; do not silently truncate, charge or delete.",
+      "sourceIds": [
+        "archive"
+      ]
+    },
+    "withdrawalSetup": {
+      "id": "withdrawal_setup",
+      "priceMinor": null,
+      "requiredToBuyFromMolyvi": false,
+      "includedPackageIds": [
+        "extended"
+      ],
+      "comparisonRowDisclosure": true,
+      "legalFunctionRequirementDependsOnStore": true,
+      "alternative": "Customer may provide a suitable independently configured solution; Basic alone does not establish legal compliance.",
+      "sourceIds": [
+        "withdrawal"
+      ]
+    }
+  },
+  "upgrade": {
+    "from": "basic",
+    "to": "extended",
+    "standardPriceMinor": 20900,
+    "firstOfferPriceMinor": 17900,
+    "totalFirstOfferConstructionMinor": 36900,
+    "firstOfferDiscountMinor": 3000,
+    "firstOfferShown": "first_screen_after_verified_basic_payment_before_brief",
+    "firstOfferWithdrawn": "customer_continues_with_basic",
+    "standardAvailableUntil": "final_delivery",
+    "retainsExistingWorkAndCounters": true,
+    "creditsOrBrandingNotIncludedInDifference": true,
+    "displayDoesNotCharge": true,
+    "technicalFailureRecoveryRule": null,
+    "sourceIds": [
+      "upgrade"
+    ]
+  },
+  "brandingRoutes": {
+    "options": [
+      "upload_existing_logo",
+      "buy_branding",
+      "no_logo_store_name"
+    ],
+    "existingLogo": "Use supplied logo to inform store branding; retain exact brand facts.",
+    "withoutPurchase": "Use exact store name as text in header with supported package styling.",
+    "withoutPurchaseForcesAddOn": false,
+    "sourceIds": [
+      "branding"
+    ]
+  },
+  "membership": {
+    "id": "molyvi_membership",
+    "priceMinor": 1490,
+    "billingCycleDays": 30,
+    "monthlyCredits": null,
+    "startsNoEarlierThan": "final_store_delivery",
+    "requiresExplicitPurchase": true,
+    "firstGrantRequiresVerifiedPayment": true,
+    "autoEnrolledWithConstruction": false,
+    "minimumMultiCycleCommitment": false,
+    "renewal": "automatic_every_30_days",
+    "cancellation": "stop_next_renewal",
+    "benefitsUntil": "end_of_verified_paid_cycle",
+    "failedRenewal": {
+      "molyviNoticesPerUnpaidCycle": 1,
+      "grantUnpaidCycle": false,
+      "memberDiscountAfterPaidCycleEnds": false,
+      "existingValidCreditsRetained": true,
+      "recoveryGrantsOnceForVerifiedPaidCycle": true
+    },
+    "embeddedShopifyAdminExperience": "agreed_target_not_implemented",
+    "billingRoute": null,
+    "sourceIds": [
+      "membership",
+      "credits"
+    ]
+  },
+  "creditsPolicy": {
+    "unitName": "credits",
+    "workRates": null,
+    "monthlyGrantQuantity": null,
+    "purchasedPackageQuantity": null,
+    "estimateAndAcceptedBudgetBeforeWork": true,
+    "noAutomaticTopUpPurchase": true,
+    "monthlyRolloverAdditionalCycles": 1,
+    "purchasedExpiry": "none",
+    "consumeOrder": "earliest_expiring_valid_grant_first_then_nonexpiring",
+    "renewalsDoNotExtendOldGrants": true,
+    "cancellationPreservesExistingValidBalances": true,
+    "ownTechnicalFailuresDebitCustomer": false,
+    "waitingForCustomerConsumesAiCredits": false,
+    "calendarTicketDurationIsComputeTime": false,
+    "includedConstructionWorkDoubleDebitsCredits": false,
+    "reservations": {
+      "scope": "ready_accepted_request",
+      "atomic": true,
+      "inFlightExpiryProtection": true,
+      "unusedReservationReturnsToOriginalExpiry": true,
+      "draftDoesNotProtectExpiry": true
+    },
+    "restoration": {
+      "doubleReviewRequired": true,
+      "actualNetDebitOnly": true,
+      "idempotent": true,
+      "monthlyMinDaysFromRestoration": 30,
+      "monthlyExpiry": "later_of_original_expiry_or_restoration_plus_30_days",
+      "purchasedExpiresAt": null,
+      "unaffectedBucketsUnchanged": true,
+      "includedNoDebit": "Restore exact entitlement instead of fictitious credits."
+    },
+    "sourceIds": [
+      "credits",
+      "reserved_credits",
+      "assistant",
+      "photo_claims"
+    ]
+  },
+  "shippingPolicy": {
+    "monetaryInputs": "integer_minor_units_customer_defined",
+    "weightInputs": "integer_grams_customer_defined",
+    "defaultCharges": null,
+    "defaultWeightLimits": null,
+    "defaultDestinationCountry": null,
+    "basicFreeFromAmountIncluded": true,
+    "freeFromAmountWeightCapOnlyExtended": true,
+    "weightIncrementModes": [
+      "complete_interval",
+      "started_interval"
+    ],
+    "weightIncrementFormula": {
+      "excess": "max(0, total_shipping_weight - initial_limit)",
+      "complete_interval": "base + extra * floor(excess / increment)",
+      "started_interval": "base + extra * ceil(excess / increment)"
+    },
+    "weightIncrementMustBePositive": true,
+    "maximumSupportedShippingWeight": null,
+    "overflowBehavior": null,
+    "freeShippingPrecedence": null,
+    "nativeRateConversionRequiresActualCheckoutValidation": true,
+    "aiMustNotInventWeights": true,
+    "preparationAndTransitTimesOptional": true,
+    "emptyTimesWarning": "Without this information, customers will not see a delivery-time estimate. Recommend completing it; it remains editable later.",
+    "pickup": {
+      "includedInBoth": true,
+      "locationsMax": 1,
+      "fields": "Only data required by Shopify for the selected pickup setup."
+    },
+    "courierConnectionIncluded": false,
+    "sourceIds": [
+      "shipping"
+    ]
+  },
+  "payments": {
+    "molyviServiceCheckout": {
+      "route": null,
+      "realPaymentsEnabled": false,
+      "customerPaymentNeverImpliesMerchantPaymentsApproval": true
+    },
+    "merchantShop": {
+      "primaryProvider": "Shopify Payments",
+      "thirdPartyProviderSetupIncluded": false,
+      "ownerActivatesAfterHandoff": true,
+      "kycCredentialsInGeneralBrief": false,
+      "manualPaymentPreferences": [
+        "bank_deposit",
+        "cash_on_delivery"
+      ],
+      "manualGuidesIncludedInBoth": true,
+      "manualMarkedPaidAutomatically": false,
+      "shopifyFeesIncludedInConstruction": false,
+      "availability": "Country, business profile, products, buyer location/currency and current Shopify requirements must be checked; selected preference is not proof of activation."
+    },
+    "sourceIds": [
+      "payments"
+    ]
+  },
+  "onboarding": {
+    "startsAfter": "verified_service_payment_or_explicitly_labelled_internal_test_payment",
+    "prePaymentChecks": "Low-cost deterministic eligibility and scope checks; no free personalized AI production.",
+    "inputModes": [
+      "multiple_choice_with_other",
+      "free_text",
+      "private_product_uploads"
+    ],
+    "qualityGuidance": "Contextual concise guidance: clear photos and rich, accurate information improve the result; never guarantee fidelity.",
+    "actions": {
+      "save": "Save editable draft without production.",
+      "skip": "Keep the question outstanding without production.",
+      "finalSubmit": "Explicitly acknowledge a locked version; start only ready tasks with satisfied dependencies."
+    },
+    "submitPerProduct": true,
+    "finalizedTaskEdits": "New controlled revision/quote, never silent overwrite.",
+    "photoInputConsistency": {
+      "checkBeforeGeneration": true,
+      "firstMismatch": "Ask for replacement references.",
+      "repeatedMismatch": "Explain uncertainty and request explicit confirmation that images show the same product, with input-quality guidance.",
+      "confirmedAmbiguityIsNotProofOfFidelity": true
+    },
+    "inactivity": {
+      "reminderDays": [
+        7,
+        14,
+        30
+      ],
+      "progress": "Substantive save, submission or approval; login alone is not progress.",
+      "afterLastReminder": "Remain awaiting customer; no automatic order cancellation, new charge or continuous AI execution."
+    },
+    "productionStarts": "First evidenced real construction work after final input submission, payment and dependencies; queued/uploaded/saved is not production.",
+    "sourceIds": [
+      "intake",
+      "product_input",
+      "inactivity",
+      "cancellation"
+    ]
+  },
+  "handoff": {
+    "acceptedPreviewRevisionRequired": true,
+    "silenceMeansApproval": false,
+    "customerActions": [
+      "approve_store",
+      "request_changes"
+    ],
+    "finalMinorAdjustmentRounds": 1,
+    "minorAdjustmentsPerRoundMax": 5,
+    "unlimitedNewScope": false,
+    "manuals": [
+      "online",
+      "pdf"
+    ],
+    "manualTopics": [
+      "products",
+      "variants",
+      "categories_collections",
+      "orders",
+      "payments_owner_activation",
+      "shipping",
+      "pages",
+      "applicable_store_settings"
+    ],
+    "customDomainInitialConnectionsIncluded": 1,
+    "domainPurchaseIncluded": false,
+    "dnsWriteRequiresRelevantAuthorization": true,
+    "deliveredAssetsIndependentOfMolyviArchive": true,
+    "technicalSupport": {
+      "daysFromFinalDelivery": 30,
+      "scope": "Confirmed technical faults of the delivered agreed scope.",
+      "verifiedFaultConsumesCredits": false,
+      "timelyTicketSurvivesWindow": true,
+      "responseSla": null,
+      "newWorkRequiresAcceptedCreditEstimate": true
+    },
+    "fullPreviewClockStarts": "Verified payment plus final required inputs for the purchased scope; ready per-task work may start sooner.",
+    "promisedDeliveryDays": null,
+    "autoPublishOnApproval": false,
+    "realPaymentActivationByMolyvi": false,
+    "reviewRequests": {
+      "provider": "Judge.me",
+      "appliesTo": "Molyvi service customers",
+      "exactSchedule": null,
+      "plan": null,
+      "screenBySatisfaction": false
+    },
+    "sourceIds": [
+      "handoff",
+      "domain",
+      "support",
+      "timing",
+      "reviews"
+    ]
+  },
+  "retention": {
+    "includedCalendarYears": 2,
+    "initialStorageBytesCap": null,
+    "membershipRequired": false,
+    "downloadConsumesCredits": false,
+    "fileClockStarts": "delivery_of_each_file",
+    "conversationClockStarts": "completion_of_each_conversation",
+    "downloadOrLoginResetsExpiry": false,
+    "reminders": [
+      {
+        "calendarMonthsBefore": 2
+      },
+      {
+        "calendarMonthsBefore": 1
+      },
+      {
+        "daysBefore": 14
+      },
+      {
+        "daysBefore": 7
+      },
+      {
+        "daysBefore": 1
+      }
+    ],
+    "reminderChannels": [
+      "email",
+      "molyvi_in_app"
+    ],
+    "graceDaysAfterExpiry": 30,
+    "graceAllows": [
+      "download",
+      "buy_extension"
+    ],
+    "afterGrace": "Scoped cleanup of expired customer-library records only; never delete published store assets.",
+    "backupPurgeProcedure": null,
+    "sourceUploadRetention": null,
+    "ledgerStatutoryRetention": null,
+    "sourceIds": [
+      "archive"
+    ]
+  },
+  "cancellation": {
+    "policyStatus": "commercial_instruction_pending_legal_applicability_and_delivery_value_allocation",
+    "preProductionRefundFraction": 0.5,
+    "postProductionRefundFractionOfUnexecutedValue": 0.25,
+    "stopNewWorkAfterCancellation": true,
+    "completedAvailableResultsRemainAccessible": true,
+    "mandatoryRightsOverride": true,
+    "finalSubmitWaivesMandatoryRights": false,
+    "deliverableValueAllocation": null,
+    "unexecutedValue": "Original accepted construction price minus value of completed available deliverables, according to the preaccepted allocation; alternatives/regens do not multiply completion value.",
+    "purchaseNotCancelledByConfirmedImageFault": true,
+    "sourceIds": [
+      "cancellation",
+      "photo_claims"
+    ]
+  },
+  "economics": {
+    "minimumRemainderFraction": 0.2,
+    "base": "net_price_excluding_VAT_after_all_applicable_costs_including_CAC_before_income_tax",
+    "actualFullBasicCostMinor": null,
+    "actualFullExtendedCostMinor": null,
+    "actualProAllocationCostMinor": null,
+    "humanActiveMinutes": null,
+    "creditConversionRates": null,
+    "costCategories": [
+      "ai_provider_and_pro_allocation",
+      "all_generation_attempts",
+      "fault_review_and_remedies",
+      "active_human_exceptions",
+      "storage_and_backup",
+      "infrastructure",
+      "support",
+      "payment_fees",
+      "future_obligation_reserve",
+      "customer_acquisition"
+    ],
+    "basicMaxTotalCostMinor": 15200,
+    "extendedMaxTotalCostMinor": 31920,
+    "discountedUpgradeConstructionMaxTotalCostMinor": 29520,
+    "unmeasuredIsZero": false,
+    "upsellAssumedRevenue": false,
+    "fullAllowanceScenarioRequired": true,
+    "sourceIds": [
+      "economics"
+    ]
+  },
+  "learning": {
+    "mode": "versioned_feedback_evaluation_then_controlled_prompt_or_rule_release",
+    "uncontrolledSelfTraining": false,
+    "privateMaterialsSentForProviderTrainingByDefault": false,
+    "sourceIds": [
+      "learning"
+    ]
+  },
+  "activationGates": {
+    "fullMeasuredCost": "PENDING",
+    "completeOnboardingAndProduction": "PENDING",
+    "realServiceCheckout": "PENDING",
+    "authenticatedCloudArchive": "PENDING",
+    "scopeAndQuotaEnforcement": "PENDING",
+    "legalApplicability": "PENDING",
+    "authorizedShopifyHandoff": "PENDING",
+    "fullBasicEndToEndAcceptance": "PENDING",
+    "commercialActivationAllowed": false
+  },
+  "openDecisions": [
+    {
+      "id": "unused_initial_photo_entitlements",
+      "value": null,
+      "blocking": "promise_of_later_use_refund_or_conversion_of_unused_initial_photo_allowance"
+    },
+    {
+      "id": "credit_quantities_and_rates",
+      "value": null,
+      "blocking": "sale_of_credit_packages_or_membership_entitlements"
+    },
+    {
+      "id": "sku_and_variant_work_caps",
+      "value": null,
+      "blocking": "commercial_intake_limits; explicit pilot scope may be narrower"
+    },
+    {
+      "id": "initial_archive_storage_cap",
+      "value": null,
+      "blocking": "full_costing_and_public_storage_promise"
+    },
+    {
+      "id": "withdrawal_setup_addon_price",
+      "value": null,
+      "blocking": "sale_of_basic_addon"
+    },
+    {
+      "id": "cancellation_legal_applicability_and_value_allocation",
+      "value": null,
+      "blocking": "live_contract_and_automated_cash_refunds"
+    },
+    {
+      "id": "molyvi_service_checkout_and_billing_route",
+      "value": null,
+      "blocking": "real_service_sales"
+    },
+    {
+      "id": "delivery_sla",
+      "value": null,
+      "blocking": "numeric_delivery_time_claim"
+    },
+    {
+      "id": "advanced_shipping_limits_and_overflow",
+      "value": null,
+      "blocking": "extended_shipping_production"
+    },
+    {
+      "id": "extended_public_package_name",
+      "value": null,
+      "blocking": "final_public_copy"
+    },
+    {
+      "id": "branding_export_dimensions_and_font_delivery",
+      "value": null,
+      "blocking": "precise_branding_handoff"
+    },
+    {
+      "id": "review_schedule_and_provider_plan",
+      "value": null,
+      "blocking": "automated_review_requests"
+    },
+    {
+      "id": "upgrade_first_offer_technical_failure_recovery",
+      "value": null,
+      "blocking": "reliable_live_upgrade_checkout"
+    },
+    {
+      "id": "source_material_backup_and_statutory_retention",
+      "value": null,
+      "blocking": "production_retention_and_privacy_operations"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+# Proposed isolated service. Applying this creates paid compute/disk.
+# Git remote/owner must be selected; no resources have been created.
+services:
+  - type: web
+    name: molyvi-customer-portal
+    runtime: node
+    region: frankfurt
+    plan: 0.5c-512mb
+    numInstances: 1
+    autoDeployTrigger: "off"
+    buildCommand: node --check molyvi-growth/hosted-customer-server.mjs
+    startCommand: node --max-old-space-size=256 molyvi-growth/hosted-customer-server.mjs
+    healthCheckPath: /healthz
+    maxShutdownDelaySeconds: 60
+    disk:
+      name: molyvi-private-data
+      mountPath: /opt/render/project/src/briefs
+      sizeGB: 10
+    envVars:
+      - key: NODE_VERSION
+        value: "24.19.0"
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
+      - key: MOLYVI_HOSTED_ENABLED
+        value: "true"
+      - key: MOLYVI_PRIVATE_STORAGE
+        value: /opt/render/project/src/briefs/molyvi-hosted-staging
+      - key: MOLYVI_REAL_EMAIL_ENABLED
+        value: "false"
+      - key: MOLYVI_PAYMENT_RECEIVER_ENABLED
+        value: "false"
+      - key: MOLYVI_AI_WORKERS_ENABLED
+        value: "false"
+      - key: MOLYVI_BACKUP_UPLOAD_ENABLED
+        value: "false"
+      - key: MOLYVI_GMAIL_ACCOUNT_VERIFIED
+        value: "false"
