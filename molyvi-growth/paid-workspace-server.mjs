@@ -97,7 +97,10 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
         const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>1_048_576)throw new IntakeError('PAYLOAD_TOO_LARGE',413);chunks.push(chunk);}
         return json(res,200,await paymentBridge.receive(Buffer.concat(chunks),req.headers));
       }
-      if(req.headers.origin && req.headers.origin!==origin || req.headers['sec-fetch-site']==='cross-site')throw new IntakeError('ORIGIN_NOT_ALLOWED',403);
+      // Opening the public sign-in page from an email or another site is a
+      // normal top-level navigation. Cross-site API/subresource requests remain blocked.
+      const publicEntryNavigation=boundary.hosted&&['GET','HEAD'].includes(req.method)&&['/','/customer/'].includes(url.pathname)&&req.headers['sec-fetch-mode']==='navigate'&&req.headers['sec-fetch-dest']==='document';
+      if(req.headers.origin && req.headers.origin!==origin || req.headers['sec-fetch-site']==='cross-site'&&!publicEntryNavigation)throw new IntakeError('ORIGIN_NOT_ALLOWED',403);
       if(url.pathname.startsWith('/api/')) {
         if(req.method==='POST' && req.headers.origin!==origin)throw new IntakeError('ORIGIN_REQUIRED',403);
         if(url.pathname==='/api/service-config'&&req.method==='GET')return json(res,200,{allowDemoOrders,servicePayments:paymentBridge?.status()??null,customerAccess:Boolean(customerAccess),customerCodeRequests:Boolean(customerAccess?.notifications),deploymentMode:boundary.hosted?'hosted_staging':'local_test',realEmailEnabled:Boolean(customerAccess?.notifications?.transport?.enabled)});
