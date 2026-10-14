@@ -11,7 +11,6 @@ services:
     buildCommand: node --check molyvi-growth/hosted-customer-server.mjs
     startCommand: node --max-old-space-size=256 molyvi-growth/hosted-customer-server.mjs
     healthCheckPath: /healthz
-    maxShutdownDelaySeconds: 60
     disk:
       name: molyvi-private-data
       mountPath: /opt/render/project/src/briefs
