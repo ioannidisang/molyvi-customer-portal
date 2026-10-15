@@ -61,7 +61,7 @@ export function createServiceProductionQueue({store,provider,enabled=false,proje
     ||enabled&&(!provider||!projectIds.length)||!Number.isSafeInteger(attemptLimit)||attemptLimit<1||attemptLimit>5
     ||!Number.isSafeInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000||!Number.isSafeInteger(pollMs)||pollMs<20)fail('SERVICE_WORKER_CONFIG_INVALID');
   const lock=path.join(store.storage,'.service-production-worker.lock'),token=crypto.randomUUID();
-  let initialized=false,ownsLock=false,interval,inflight,controller,outstanding=null,stopped=false,lastError=null;
+  let initialized=false,ownsLock=false,interval,inflight,controller,outstanding=null,stopped=false,suspended=false,lastError=null;
   const read=async id=>{const directory=await store.directory(id),file=path.join(directory,'workspace.json');if((await fs.lstat(file)).isSymbolicLink())fail('UNSAFE_STORAGE');const candidate=JSON.parse(await fs.readFile(file,'utf8'));return store.read(id,candidate.ownerId);};
   const initialize=async()=>{
     if(initialized)return;
@@ -189,6 +189,7 @@ export function createServiceProductionQueue({store,provider,enabled=false,proje
     return false;
   };
   const tick=()=>{
+    if(suspended)return Promise.resolve(false);
     if(inflight)return inflight;
     inflight=one().catch(error=>{lastError=error.code??'SERVICE_WORKER_FAILED';return false;}).finally(()=>{inflight=null;});return inflight;
   };
@@ -197,5 +198,5 @@ export function createServiceProductionQueue({store,provider,enabled=false,proje
     stopped=true;clearInterval(interval);controller?.abort();if(inflight)await inflight;
     if(ownsLock&&!outstanding){const ownerFile=path.join(lock,'owner.json');const owner=JSON.parse(await fs.readFile(ownerFile,'utf8'));if(owner.token===token){await fs.unlink(ownerFile);await fs.rmdir(lock);ownsLock=false;}}
   };
-  return {start,tick,stop,drain:async()=>{for(let i=0;i<64;i++)if(!await tick())break;},status:()=>({enabled,taskIds:[...taskIds],attemptLimit,lastError})};
+  return {start,tick,stop,suspend:()=>{suspended=true;return ()=>{suspended=false;};},drain:async()=>{for(let i=0;i<64;i++)if(!await tick())break;},status:()=>({enabled,taskIds:[...taskIds],attemptLimit,lastError,active:Boolean(inflight)})};
 }

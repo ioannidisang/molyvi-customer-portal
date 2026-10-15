@@ -24,6 +24,7 @@ import {createServicePaymentBridge} from './lib/service-payment-bridge.mjs';
 import {createServiceProductionQueue} from './lib/service-production-queue.mjs';
 import {createRequestBoundary} from './lib/hosted-request-boundary.mjs';
 import {RequestSlots} from './lib/request-slots.mjs';
+import {isHostedControlledPro} from './lib/hosted-controlled-pro.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const json=(res,status,body,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(body));};
@@ -35,12 +36,14 @@ async function body(req,limit=32_768) {
 }
 function keys(value,allowed) {if(!value || typeof value!=='object' || Array.isArray(value) || Object.keys(value).some(key=>!allowed.includes(key)))throw new IntakeError('INVALID_REQUEST',400);}
 
-export async function createWorkspaceApp({site=path.join(root,'public/workspace'),storage=path.join(PRIVATE_ROOT,'molyvi-task-preview'),workerDelayMs=250,photoReviewer,reviewQueueOptions={},productProvider,productionQueueOptions={},serviceProvider,serviceProductionOptions={},servicePayments,hostedTestPayments,allowDemoOrders=true,customerAccess,deployment}={}) {
+export async function createWorkspaceApp({site=path.join(root,'public/workspace'),storage=path.join(PRIVATE_ROOT,'molyvi-task-preview'),workerDelayMs=250,photoReviewer,reviewQueueOptions={},productProvider,productionQueueOptions={},serviceProvider,serviceProductionOptions={},servicePayments,hostedTestPayments,hostedControlledPro,allowDemoOrders=true,customerAccess,deployment}={}) {
   const boundary=createRequestBoundary(deployment);
   if(boundary.hosted&&(!customerAccess||photoReviewer||productProvider||serviceProvider||servicePayments))throw new IntakeError('HOSTED_STAGING_CUSTOMER_MODE_REQUIRED',500);
   if(customerAccess){if(servicePayments)throw new IntakeError('CUSTOMER_PAYMENT_MODE_CONFLICT',500);allowDemoOrders=false;}
   if(hostedTestPayments&&(!boundary.hosted||!customerAccess||typeof hostedTestPayments.receive!=='function'))throw new IntakeError('HOSTED_TEST_PAYMENT_MODE_REQUIRED',500);
-  const realSite=await fs.realpath(site),store=await new TaskStore(storage).ready();
+  if(hostedControlledPro&&(!boundary.hosted||!customerAccess||!isHostedControlledPro(hostedControlledPro)))throw new IntakeError('HOSTED_CONTROLLED_PRO_MODE_REQUIRED',500);
+  const realSite=await fs.realpath(site),store=customerAccess?.workspaces??await new TaskStore(storage).ready();
+  if(!(store instanceof TaskStore)||store.storage!==path.resolve(storage))throw new IntakeError('WORKSPACE_STORAGE_MISMATCH',500);
   const overlap=path.relative(realSite,store.storage);
   const reverse=path.relative(store.storage,realSite);
   if(!overlap || (!overlap.startsWith('..')&&!path.isAbsolute(overlap)) || !reverse || (!reverse.startsWith('..')&&!path.isAbsolute(reverse)))throw new IntakeError('PRIVATE_STORAGE_OVERLAPS_SITE',500);
@@ -50,7 +53,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   const sessionCookie=(session)=>{const token=crypto.randomBytes(32).toString('hex');sessions.set(token,session);return `molyvi_demo=${token}; HttpOnly; SameSite=Strict; Path=/`;};
   const photoQueue=createPhotoReviewQueue({...reviewQueueOptions,store,provider:photoReviewer,enabled:Boolean(photoReviewer)});
   const productQueue=createProductProductionQueue({...productionQueueOptions,store,provider:productProvider,enabled:Boolean(productProvider)});
-  const serviceQueue=createServiceProductionQueue({...serviceProductionOptions,store,provider:serviceProvider,enabled:Boolean(serviceProvider)});
+  const serviceQueue=createServiceProductionQueue({...serviceProductionOptions,...hostedControlledPro?.options,store,provider:hostedControlledPro?.provider??serviceProvider,enabled:Boolean(hostedControlledPro??serviceProvider)});
   const view=record=>{
     const visible=viewWorkspace(record),queues=publicPhotoReviewQueue(record);
     visible.serviceProduction=serviceQueue.status();
@@ -71,7 +74,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   const signalProductQueue=()=>{if(!closing)void productQueue.tick().catch(()=>{/* Persisted attempts prevent blind retries. */});};
   const pump=session=>{
     if(closing || pumps.has(session.projectId))return;
-    if(serviceProvider)void serviceQueue.tick();
+    if(serviceProvider||hostedControlledPro)void serviceQueue.tick();
     const running=(async()=>{
       while(!closing) {
         const {result:job}=await store.transact(session.projectId,session.ownerId,record=>record.order.paymentMode==='local_simulation'?claimJob(record):null);
@@ -316,10 +319,10 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   server.on('close',()=>{closing=true;sessions.clear();void photoQueue.stop().catch(()=>{});void productQueue.stop().catch(()=>{});void serviceQueue.stop().catch(()=>{});});
   server.pauseForBackup=async()=>{
     if(!boundary.hosted||backupPaused||closing)throw Error('BACKUP_DRAIN_UNAVAILABLE');
-    backupPaused=true;const end=Date.now()+30_000;
-    try{while(requestSlots.active){if(Date.now()>end)throw Error('BACKUP_DRAIN_TIMEOUT');await new Promise(r=>setTimeout(r,25));}}
-    catch(e){backupPaused=false;throw e;}
-    return ()=>{backupPaused=false;};
+    backupPaused=true;const end=Date.now()+30_000,resume=serviceQueue.suspend();
+    try{while(requestSlots.active||serviceQueue.status().active){if(Date.now()>end)throw Error('BACKUP_DRAIN_TIMEOUT');await new Promise(r=>setTimeout(r,25));}}
+    catch(e){resume();backupPaused=false;throw e;}
+    return ()=>{resume();backupPaused=false;};
   };
   server.drainWorkers=async()=>{closing=true;await Promise.allSettled([...pumps.values(),photoQueue.stop(),productQueue.stop(),serviceQueue.stop()]);};
   // Trusted local lifecycle handle; this is never exposed through HTTP.
