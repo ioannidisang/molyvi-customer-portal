@@ -11,21 +11,23 @@ import {createGoogleMailTokenProvider} from './lib/google-mail-token-provider.mj
 import {createWorkspaceApp} from './paid-workspace-server.mjs';
 import {createRequestBoundary} from './lib/hosted-request-boundary.mjs';
 import {createAutomaticBackups,reportBackupStartupFailure} from './operations/r2-backup/automatic.mjs';
+import {createHostedTestPayments,loadHostedTestPaymentConfig} from './lib/hosted-test-payments.mjs';
 
-export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport}={}){
+export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport,testPaymentConfig}={}){
   createRequestBoundary({publicOrigin,healthHosts});
   const accounts=await new CustomerStore(path.join(storage,'accounts')).ready();let server;
   try{
     const workspaces=await new TaskStore(path.join(storage,'workspaces')).ready(),notifications=await new CustomerNotifications({accounts,workspaces,storage:path.join(storage,'mail'),portalUrl:publicOrigin+'/customer/',transport}).ready(),
       deliveries=await new CustomerDelivery({accounts,workspaces,storage:path.join(storage,'deliveries'),notifications}).ready();
-    server=await createWorkspaceApp({storage:workspaces.storage,customerAccess:{accounts,notifications,deliveries},deployment:{publicOrigin,healthHosts}});
+    const testPayments=testPaymentConfig?createHostedTestPayments({store:workspaces,notifications,config:testPaymentConfig}):null;
+    server=await createWorkspaceApp({storage:workspaces.storage,customerAccess:{accounts,notifications,deliveries},hostedTestPayments:testPayments,deployment:{publicOrigin,healthHosts}});
     let interval,stopping=false,active,stopPromise,backupPaused=false;
     const tick=()=>{if(!stopping&&!backupPaused&&!active)active=notifications.tick().catch(()=>{}).finally(()=>{active=null;});};
     server.on('listening',()=>{if(transport){interval=setInterval(tick,1000);tick();}});
     const stop=()=>stopPromise??=(async()=>{stopping=true;clearInterval(interval);server.closeIdleConnections();await server.drainWorkers();if(server.listening)await new Promise(r=>server.close(r));await active;accounts.close();})();
     server.on('close',()=>{clearInterval(interval);});
     const quietSnapshot=async fn=>{backupPaused=true;let resume;try{resume=await server.pauseForBackup();await active;return await fn();}finally{resume?.();backupPaused=false;}};
-    return {server,accounts,workspaces,notifications,deliveries,stop,quietSnapshot};
+    return {server,accounts,workspaces,notifications,deliveries,testPayments,stop,quietSnapshot};
   }catch(e){accounts.close();throw e;}
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
@@ -40,8 +42,9 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
       approvedRecipients:[process.env.MOLYVI_GMAIL_APPROVED_TEST_RECIPIENT].filter(Boolean)}).ready();
     await getAccessToken(); // Refuse startup if the grant belongs to another mailbox.
   }
-  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport});
-  await fs.writeFile(path.join(storage,'hosted-scope.json'),JSON.stringify({mode:'hosted_staging',realEmailEnabled:Boolean(transport),aiWorkersEnabled:false,realPaymentsEnabled:false,cloudArchiveActive:false})+'\n',{mode:0o600});
+  const testPaymentConfig=await loadHostedTestPaymentConfig({enabled:process.env.MOLYVI_HOSTED_TEST_PAYMENTS_ENABLED==='true'});
+  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport,testPaymentConfig});
+  await fs.writeFile(path.join(storage,'hosted-scope.json'),JSON.stringify({mode:'hosted_staging',realEmailEnabled:Boolean(transport),testPaymentsEnabled:Boolean(app.testPayments),aiWorkersEnabled:false,realPaymentsEnabled:false,cloudArchiveActive:false})+'\n',{mode:0o600});
   let backups;
   try{backups=await createAutomaticBackups({storage,release:process.env.RENDER_GIT_COMMIT,quietSnapshot:app.quietSnapshot,transport});}
   catch{console.error('MOLYVI_AUTOMATIC_BACKUP_STARTUP_BLOCKED');await reportBackupStartupFailure(transport);}

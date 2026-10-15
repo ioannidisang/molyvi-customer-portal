@@ -35,16 +35,18 @@ async function body(req,limit=32_768) {
 }
 function keys(value,allowed) {if(!value || typeof value!=='object' || Array.isArray(value) || Object.keys(value).some(key=>!allowed.includes(key)))throw new IntakeError('INVALID_REQUEST',400);}
 
-export async function createWorkspaceApp({site=path.join(root,'public/workspace'),storage=path.join(PRIVATE_ROOT,'molyvi-task-preview'),workerDelayMs=250,photoReviewer,reviewQueueOptions={},productProvider,productionQueueOptions={},serviceProvider,serviceProductionOptions={},servicePayments,allowDemoOrders=true,customerAccess,deployment}={}) {
+export async function createWorkspaceApp({site=path.join(root,'public/workspace'),storage=path.join(PRIVATE_ROOT,'molyvi-task-preview'),workerDelayMs=250,photoReviewer,reviewQueueOptions={},productProvider,productionQueueOptions={},serviceProvider,serviceProductionOptions={},servicePayments,hostedTestPayments,allowDemoOrders=true,customerAccess,deployment}={}) {
   const boundary=createRequestBoundary(deployment);
   if(boundary.hosted&&(!customerAccess||photoReviewer||productProvider||serviceProvider||servicePayments))throw new IntakeError('HOSTED_STAGING_CUSTOMER_MODE_REQUIRED',500);
   if(customerAccess){if(servicePayments)throw new IntakeError('CUSTOMER_PAYMENT_MODE_CONFLICT',500);allowDemoOrders=false;}
+  if(hostedTestPayments&&(!boundary.hosted||!customerAccess||typeof hostedTestPayments.receive!=='function'))throw new IntakeError('HOSTED_TEST_PAYMENT_MODE_REQUIRED',500);
   const realSite=await fs.realpath(site),store=await new TaskStore(storage).ready();
   const overlap=path.relative(realSite,store.storage);
   const reverse=path.relative(store.storage,realSite);
   if(!overlap || (!overlap.startsWith('..')&&!path.isAbsolute(overlap)) || !reverse || (!reverse.startsWith('..')&&!path.isAbsolute(reverse)))throw new IntakeError('PRIVATE_STORAGE_OVERLAPS_SITE',500);
   const sessions=new Map(),pumps=new Map();
   const paymentBridge=servicePayments?createServicePaymentBridge({...servicePayments,store}):null;
+  const paymentReceiver=hostedTestPayments??paymentBridge;
   const sessionCookie=(session)=>{const token=crypto.randomBytes(32).toString('hex');sessions.set(token,session);return `molyvi_demo=${token}; HttpOnly; SameSite=Strict; Path=/`;};
   const photoQueue=createPhotoReviewQueue({...reviewQueueOptions,store,provider:photoReviewer,enabled:Boolean(photoReviewer)});
   const productQueue=createProductProductionQueue({...productionQueueOptions,store,provider:productProvider,enabled:Boolean(productProvider)});
@@ -97,11 +99,11 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
       if(health){customerAccess.accounts.db.prepare('SELECT 1').get();return json(res,200,req.method==='HEAD'?undefined:{status:'ok'});}
       // Server-to-server delivery uses HMAC, not a browser session or Origin.
       if(url.pathname==='/webhooks/shopify/orders-paid'&&req.method==='POST'){
-        if(!paymentBridge)throw new IntakeError('PAYMENT_ADAPTER_UNAVAILABLE',503);
+        if(!paymentReceiver)throw new IntakeError('PAYMENT_ADAPTER_UNAVAILABLE',503);
         if(req.headers.origin||req.headers['sec-fetch-site'])throw new IntakeError('PAYMENT_SERVER_DELIVERY_REQUIRED',403);
         if(!/^application\/json(?:;\s*charset=utf-8)?$/i.test(req.headers['content-type']??''))throw new IntakeError('JSON_REQUIRED',415);
         const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>1_048_576)throw new IntakeError('PAYLOAD_TOO_LARGE',413);chunks.push(chunk);}
-        return json(res,200,await paymentBridge.receive(Buffer.concat(chunks),req.headers));
+        return json(res,200,await paymentReceiver.receive(Buffer.concat(chunks),req.headers));
       }
       // Opening the public sign-in page from an email or another site is a
       // normal top-level navigation. Cross-site API/subresource requests remain blocked.

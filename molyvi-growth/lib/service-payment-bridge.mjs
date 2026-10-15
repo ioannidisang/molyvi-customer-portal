@@ -16,9 +16,9 @@ const keyUuid=value=>{const h=sha(value);return `${h.slice(0,8)}-${h.slice(8,12)
 // Local, single-process pilot. This does not register webhooks, create Shopify
 // products, enable sales or provide distributed transactions/authentication.
 export function createServicePaymentBridge({store,secret,shopDomain=SHOP,apiVersion='2026-10',variants,
-  evidenceMode='signed_fixture',checkoutEnabled=false,clock=Date.now,accessLifetimeMs=7*24*60*60*1000,onVerifiedPayment}={}) {
+  evidenceMode='signed_fixture',checkoutEnabled=false,clock=Date.now,accessLifetimeMs=7*24*60*60*1000,onVerifiedPayment,intentScope}={}) {
   if(!store||typeof secret!=='string'||secret.length<32||shopDomain!==SHOP||apiVersion!=='2026-10'||
-    !['signed_fixture','shopify_test'].includes(evidenceMode)||typeof checkoutEnabled!=='boolean'||checkoutEnabled&&evidenceMode!=='shopify_test'||!Number.isSafeInteger(accessLifetimeMs)||accessLifetimeMs<1||onVerifiedPayment!==undefined&&typeof onVerifiedPayment!=='function')fail('PAYMENT_CONFIG_INVALID',500);
+    !['signed_fixture','shopify_test'].includes(evidenceMode)||typeof checkoutEnabled!=='boolean'||checkoutEnabled&&evidenceMode!=='shopify_test'||!Number.isSafeInteger(accessLifetimeMs)||accessLifetimeMs<1||onVerifiedPayment!==undefined&&typeof onVerifiedPayment!=='function'||intentScope!==undefined&&(typeof intentScope!=='string'||!/^[a-z0-9_-]{1,64}$/.test(intentScope)))fail('PAYMENT_CONFIG_INVALID',500);
   const mapping=structuredClone(variants??{}),seen=new Set();
   if(!Object.keys(mapping).length)fail('PAYMENT_CONFIG_INVALID',500);
   for(const [packageId,variant]of Object.entries(mapping)){
@@ -67,6 +67,7 @@ export function createServicePaymentBridge({store,secret,shopDomain=SHOP,apiVers
     const record=createWorkspace({id:intentId,ownerId,order,budgetEur:0,now:clock()});
     record.servicePurchase={schemaVersion:1,intentId,shopDomain,apiVersion,evidenceMode,checkoutEnabled,
       accessHash:sha(accessKey),accessExpiresAt:clock()+accessLifetimeMs,expected:structuredClone(expected),receipt:null};
+    if(intentScope!==undefined)record.servicePurchase.intentScope=intentScope;
     await store.create(record);
     return {record,session:{projectId:record.id,ownerId},accessKey,
       checkoutBinding:{attributeName:'molyvi_service_intent',value:intentId},checkoutConfigured:checkoutEnabled};
@@ -87,6 +88,7 @@ export function createServicePaymentBridge({store,secret,shopDomain=SHOP,apiVers
       if(bindings.length!==1||!UUID.test(bindings[0]?.value??''))return {accepted:true,outcome:'ignored',reason:'service_binding_missing'};
       const record=all.find(r=>r.id===bindings[0].value);
       if(!record)return {accepted:true,outcome:'ignored',reason:'service_binding_unknown'};
+      if(record.servicePurchase.intentScope!==intentScope)return {accepted:true,outcome:'ignored',reason:'service_binding_outside_scope'};
       if(record.servicePurchase.evidenceMode!==evidenceMode)fail('PAYMENT_EVIDENCE_MODE_CONFLICT',409);
       const collision=all.find(r=>{const receipt=r.servicePurchase.receipt;return receipt&&(receipt.orderId===orderId||receipt.webhookId===delivery.webhookId||delivery.eventId&&receipt.eventId===delivery.eventId);});
       if(collision){
