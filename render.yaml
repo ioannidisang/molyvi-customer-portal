@@ -1,5 +1,5 @@
-# Proposed isolated service. Applying this creates paid compute/disk.
-# Git remote/owner must be selected; no resources have been created.
+# Existing authorized staging service; compute/disk already active.
+# Mail activation and OAuth secrets are managed in Render, never in this file.
 services:
   - type: web
     name: molyvi-customer-portal
@@ -25,7 +25,7 @@ services:
       - key: MOLYVI_PRIVATE_STORAGE
         value: /opt/render/project/src/briefs/molyvi-hosted-staging
       - key: MOLYVI_REAL_EMAIL_ENABLED
-        value: "false"
+        sync: false
       - key: MOLYVI_PAYMENT_RECEIVER_ENABLED
         value: "false"
       - key: MOLYVI_AI_WORKERS_ENABLED
@@ -33,4 +33,4 @@ services:
       - key: MOLYVI_BACKUP_UPLOAD_ENABLED
         value: "false"
       - key: MOLYVI_GMAIL_ACCOUNT_VERIFIED
-        value: "false"
+        sync: false

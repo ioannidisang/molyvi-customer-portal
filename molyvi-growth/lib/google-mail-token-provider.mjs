@@ -1,8 +1,9 @@
 // Operator-owned Google Workspace OAuth only; no domain-wide delegation.
 // Required scopes: openid, email, https://www.googleapis.com/auth/gmail.send.
 // Credentials belong in managed secrets, never a public bundle or tracked file.
-export function createGoogleMailTokenProvider({clientId,clientSecret,refreshToken,expectedEmail='hello@molyvi.com',fetchImpl=globalThis.fetch,now=Date.now}={}){
-  if(expectedEmail!=='hello@molyvi.com'||[clientId,clientSecret,refreshToken].some(v=>typeof v!=='string'||!v||v.length>4096||/[\x00-\x1f\x7f]/.test(v)))throw Error('GOOGLE_MAIL_CREDENTIALS_REQUIRED');
+export const GOOGLE_MAIL_SENDER='info@molyvi.com';
+export function createGoogleMailTokenProvider({clientId,clientSecret,refreshToken,expectedEmail=GOOGLE_MAIL_SENDER,fetchImpl=globalThis.fetch,now=Date.now}={}){
+  if(expectedEmail!==GOOGLE_MAIL_SENDER||[clientId,clientSecret,refreshToken].some(v=>typeof v!=='string'||!v||v.length>4096||/[\x00-\x1f\x7f]/.test(v)))throw Error('GOOGLE_MAIL_CREDENTIALS_REQUIRED');
   let cached,pending;
   return async()=>{
     if(cached&&cached.expires>now()+60_000)return {accessToken:cached.token,email:cached.email,emailVerified:true};
