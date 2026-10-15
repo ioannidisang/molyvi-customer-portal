@@ -1,0 +1,9 @@
+{
+  "name": "molyvi-private-backup-operator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=24"},
+  "scripts": {"test": "node --test *.test.mjs"},
+  "dependencies": {"@aws-sdk/client-s3": "3.1152.0"}
+}

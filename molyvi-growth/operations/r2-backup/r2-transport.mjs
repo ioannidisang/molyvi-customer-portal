@@ -1,0 +1,68 @@
+// Private, bucket-scoped transport. No bucket creation, ACL, delete or public URL APIs.
+import fs from 'node:fs/promises';
+import {createReadStream,createWriteStream} from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {Transform} from 'node:stream';
+import {pipeline} from 'node:stream/promises';
+const BUCKET='molyvi-private-backups',MAX_ENCRYPTED=512_000_000;
+const assert=(v,code)=>{if(!v)throw Error(code);};
+export function r2Options(c){
+  assert(c&&Object.keys(c).sort().join(',')==='accessKeyId,accountId,bucket,jurisdiction,secretAccessKey','R2_CONFIG_FIELDS');
+  assert(c.bucket===BUCKET&&c.jurisdiction==='eu'&&/^[a-f0-9]{32}$/.test(c.accountId)&&/^[a-f0-9]{32}$/i.test(c.accessKeyId)&&/^[a-f0-9]{64}$/i.test(c.secretAccessKey),'R2_SCOPE_REQUIRED');
+  return {region:'auto',endpoint:'https://'+c.accountId+'.eu.r2.cloudflarestorage.com',forcePathStyle:true,maxAttempts:1,
+    requestChecksumCalculation:'WHEN_REQUIRED',responseChecksumValidation:'WHEN_REQUIRED',credentials:{accessKeyId:c.accessKeyId,secretAccessKey:c.secretAccessKey}};
+}
+function objectKey(key){assert(typeof key==='string'&&/^snapshots\/\d{4}-\d{2}-\d{2}\/[a-z0-9-]{8,100}\/service-backup\.mlvb$/.test(key),'R2_OBJECT_KEY_SCOPE');return key;}
+function expected(e){assert(e&&Number.isSafeInteger(e.bytes)&&e.bytes>43&&e.bytes<=MAX_ENCRYPTED&&/^[a-f0-9]{64}$/.test(e.sha256),'R2_RECEIPT_REQUIRED');}
+async function safeLocal(file,{mustExist=true}={}){
+  file=path.resolve(file);const p=path.parse(file);let current=p.root;
+  for(const bit of file.slice(p.root.length).split(path.sep).filter(Boolean)){
+    current=path.join(current,bit);try{assert(!(await fs.lstat(current)).isSymbolicLink(),'R2_LOCAL_SYMLINK');}catch(e){if(e.code==='ENOENT'&&!mustExist&&current===file)break;throw e;}
+  }return file;
+}
+async function checksum(file){const sha=crypto.createHash('sha256'),md5=crypto.createHash('md5');let bytes=0;for await(const b of createReadStream(file)){bytes+=b.length;assert(bytes<=MAX_ENCRYPTED,'R2_BACKUP_TOO_LARGE');sha.update(b);md5.update(b);}return {bytes,sha256:sha.digest('hex'),md5:md5.digest('base64')};}
+export async function createR2Transport(config,{sdk,budget}={}){
+  assert(budget?.reserve&&budget?.checkStorage,'R2_DURABLE_BUDGET_REQUIRED');
+  const options=r2Options(config);sdk??=await import('@aws-sdk/client-s3');const client=new sdk.S3Client(options);
+  async function send(kind,input){budget.reserve({requests:1});try{return await client.send(new sdk[kind+'Command'](input),{abortSignal:AbortSignal.timeout(300_000)});}catch(e){const code=Number(e?.$metadata?.httpStatusCode)||0;const safe=Error('R2_'+kind.toUpperCase()+'_FAILED_HTTP_'+code);safe.httpStatus=code;throw safe;}}
+  function verifiedMetadata(result,e){assert(result.ContentLength===e.bytes&&result.Metadata?.['molyvi-sha256']===e.sha256,'R2_REMOTE_BYTES_MISMATCH');}
+  async function head(key,e){objectKey(key);expected(e);const result=await send('HeadObject',{Bucket:BUCKET,Key:key});verifiedMetadata(result,e);return result;}
+  return {
+    async upload({file,key,receipt}){
+      objectKey(key);expected(receipt);file=await safeLocal(file);assert((await fs.stat(file)).isFile(),'R2_LOCAL_NOT_FILE');
+      const h=await fs.open(file,'r');try{const prefix=Buffer.alloc(16);await h.read(prefix,0,16,0);assert(prefix.toString().startsWith('MOLYVI-BACKUP-1\n'),'R2_ENCRYPTED_ARCHIVE_ONLY');}finally{await h.close();}
+      const actual=await checksum(file);assert(actual.bytes===receipt.bytes&&actual.sha256===receipt.sha256,'R2_SOURCE_HASH_MISMATCH');
+      try{await head(key,receipt);return {status:'PASS',duplicate:true,key,bytes:actual.bytes,sha256:actual.sha256};}catch(e){if(e.httpStatus!==404)throw e;}
+      const list=await send('ListObjectsV2',{Bucket:BUCKET,MaxKeys:21});assert(!list.IsTruncated,'R2_BUDGET_STOP_STORAGE');budget.checkStorage(list.Contents??[],actual.bytes);
+      budget.reserve({uploadBytes:actual.bytes});
+      const body=createReadStream(file);
+      let put;try{put=await send('PutObject',{Bucket:BUCKET,Key:key,Body:body,ContentLength:actual.bytes,ContentType:'application/octet-stream',ContentMD5:actual.md5,
+        CacheControl:'private, no-store',StorageClass:'STANDARD',IfNoneMatch:'*',Metadata:{'molyvi-sha256':actual.sha256,'molyvi-format':'1'}});}finally{body.destroy();}
+      const readback=await head(key,receipt);
+      return {status:'PASS',duplicate:false,key,bytes:actual.bytes,sha256:actual.sha256,etag:readback.ETag??put.ETag??null,requestId:put.$metadata?.requestId??null};
+    },
+    async download({file,key,receipt}){
+      objectKey(key);expected(receipt);file=await safeLocal(file,{mustExist:false});
+      try{await fs.lstat(file);throw Error('R2_DOWNLOAD_ALREADY_EXISTS');}catch(e){if(e.code!=='ENOENT')throw e;}
+      budget.reserve({downloadBytes:receipt.bytes});
+      const result=await send('GetObject',{Bucket:BUCKET,Key:key});
+      try{verifiedMetadata(result,receipt);}catch(e){result.Body?.destroy?.();throw e;}
+      const tmp=file+'.partial-'+crypto.randomUUID(),sha=crypto.createHash('sha256');let bytes=0;
+      const guard=new Transform({transform(b,enc,cb){bytes+=b.length;if(bytes>receipt.bytes){cb(Error('R2_DOWNLOAD_LENGTH_EXCEEDED'));return;}sha.update(b);cb(null,b);}});
+      try{
+        await pipeline(result.Body,guard,createWriteStream(tmp,{flags:'wx',mode:0o600}));
+        assert(bytes===receipt.bytes&&sha.digest('hex')===receipt.sha256,'R2_DOWNLOAD_HASH_MISMATCH');
+        // COPYFILE_EXCL also refuses an output created while the transfer ran.
+        await fs.copyFile(tmp,file,1);await fs.chmod(file,0o600);return {status:'PASS',key,bytes,sha256:receipt.sha256,downloadedFromR2:true};
+      }finally{await fs.rm(tmp,{force:true});}
+    },
+    async anonymousReadStatus(key){
+      objectKey(key);const url=options.endpoint+'/'+BUCKET+'/'+key;
+      budget.reserve({requests:1});
+      const response=await fetch(url,{method:'GET',credentials:'omit',redirect:'error',signal:AbortSignal.timeout(15_000)});await response.body?.cancel();
+      assert([400,401,403,404].includes(response.status),'R2_ANONYMOUS_ACCESS_NOT_REFUSED');return {status:'PASS',httpStatus:response.status,anonymousDataReturned:false};
+    },
+    close(){client.destroy();}
+  };
+}

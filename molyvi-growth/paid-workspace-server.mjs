@@ -63,7 +63,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     });
     return visible;
   };
-  let closing=false,activeArchives=0;
+  let closing=false,activeArchives=0,backupPaused=false;
   const requestSlots=new RequestSlots();
   const signalPhotoQueue=()=>{if(!closing)void photoQueue.tick().catch(()=>{/* Persisted queue state retains evidence and bounded recovery. */});};
   const signalProductQueue=()=>{if(!closing)void productQueue.tick().catch(()=>{/* Persisted attempts prevent blind retries. */});};
@@ -83,6 +83,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     pumps.set(session.projectId,running);
   };
   const server=http.createServer(async(req,res)=>{
+    if(backupPaused&&req.url!=='/healthz')return json(res,503,{error:'BACKUP_SNAPSHOT_IN_PROGRESS'},{'Retry-After':'15'});
     if(boundary.hosted){
       const controller=new AbortController(),abort=()=>controller.abort();res.once('close',abort);
       let release;
@@ -311,6 +312,13 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   server.on('listening',()=>{void productQueue.start().catch(()=>{/* No paid API fallback. */});});
   server.on('listening',()=>{void serviceQueue.start().catch(()=>{/* Keep stored attempts; no provider fallback. */});});
   server.on('close',()=>{closing=true;sessions.clear();void photoQueue.stop().catch(()=>{});void productQueue.stop().catch(()=>{});void serviceQueue.stop().catch(()=>{});});
+  server.pauseForBackup=async()=>{
+    if(!boundary.hosted||backupPaused||closing)throw Error('BACKUP_DRAIN_UNAVAILABLE');
+    backupPaused=true;const end=Date.now()+30_000;
+    try{while(requestSlots.active){if(Date.now()>end)throw Error('BACKUP_DRAIN_TIMEOUT');await new Promise(r=>setTimeout(r,25));}}
+    catch(e){backupPaused=false;throw e;}
+    return ()=>{backupPaused=false;};
+  };
   server.drainWorkers=async()=>{closing=true;await Promise.allSettled([...pumps.values(),photoQueue.stop(),productQueue.stop(),serviceQueue.stop()]);};
   // Trusted local lifecycle handle; this is never exposed through HTTP.
   server.photoReviewQueue=photoQueue;

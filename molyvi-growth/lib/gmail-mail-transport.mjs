@@ -28,7 +28,8 @@ export class GmailMailTransport {
   async quota(){let day=0,month=0;const now=this.now(),key=new Date(now).toISOString().slice(0,7);for(const file of await fs.readdir(this.storage)){if(!file.endsWith('.json')||!uuid.test(file.slice(0,-5)))continue;const row=await this.read(file.slice(0,-5));if(!Number.isFinite(row.firstAttemptAt))throw error('INVALID_GMAIL_JOURNAL','unknown');if(row.firstAttemptAt>now-86400000)day++;if(new Date(row.firstAttemptAt).toISOString().slice(0,7)===key)month++;}return day<this.dailyLimit&&month<this.monthlyLimit;}
   async send({messageId,payload}){
     if(!this.enabled)throw error('REAL_EMAIL_DISABLED');
-    if(!uuid.test(messageId)||!payload||!address(payload.to)||!this.approvedRecipients.has(payload.to.toLowerCase())||!['access_code','delivery_ready'].includes(payload.kind)||
+    if(!uuid.test(messageId)||!payload||!address(payload.to)||!this.approvedRecipients.has(payload.to.toLowerCase())||!['access_code','delivery_ready','backup_alert'].includes(payload.kind)||
+      (payload.kind==='backup_alert'&&payload.to!=='aioannidis@kooqie.com')||
       typeof payload.subject!=='string'||!payload.subject||payload.subject.length>200||/[\r\n\x00]/.test(payload.subject)||typeof payload.text!=='string'||!payload.text||Buffer.byteLength(payload.text)>32768)throw error('GMAIL_PILOT_SCOPE_REQUIRED');
     if(this.active)throw error('GMAIL_TRANSPORT_BUSY','unknown');this.active=true;
     try{

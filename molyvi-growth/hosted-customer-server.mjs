@@ -10,6 +10,7 @@ import {GmailMailTransport} from './lib/gmail-mail-transport.mjs';
 import {createGoogleMailTokenProvider} from './lib/google-mail-token-provider.mjs';
 import {createWorkspaceApp} from './paid-workspace-server.mjs';
 import {createRequestBoundary} from './lib/hosted-request-boundary.mjs';
+import {createAutomaticBackups,reportBackupStartupFailure} from './operations/r2-backup/automatic.mjs';
 
 export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport}={}){
   createRequestBoundary({publicOrigin,healthHosts});
@@ -18,12 +19,13 @@ export async function createHostedCustomerServer({publicOrigin,healthHosts=[],st
     const workspaces=await new TaskStore(path.join(storage,'workspaces')).ready(),notifications=await new CustomerNotifications({accounts,workspaces,storage:path.join(storage,'mail'),portalUrl:publicOrigin+'/customer/',transport}).ready(),
       deliveries=await new CustomerDelivery({accounts,workspaces,storage:path.join(storage,'deliveries'),notifications}).ready();
     server=await createWorkspaceApp({storage:workspaces.storage,customerAccess:{accounts,notifications,deliveries},deployment:{publicOrigin,healthHosts}});
-    let interval,stopping=false,active,stopPromise;
-    const tick=()=>{if(!stopping&&!active)active=notifications.tick().catch(()=>{}).finally(()=>{active=null;});};
+    let interval,stopping=false,active,stopPromise,backupPaused=false;
+    const tick=()=>{if(!stopping&&!backupPaused&&!active)active=notifications.tick().catch(()=>{}).finally(()=>{active=null;});};
     server.on('listening',()=>{if(transport){interval=setInterval(tick,1000);tick();}});
     const stop=()=>stopPromise??=(async()=>{stopping=true;clearInterval(interval);server.closeIdleConnections();await server.drainWorkers();if(server.listening)await new Promise(r=>server.close(r));await active;accounts.close();})();
     server.on('close',()=>{clearInterval(interval);});
-    return {server,accounts,workspaces,notifications,deliveries,stop};
+    const quietSnapshot=async fn=>{backupPaused=true;let resume;try{resume=await server.pauseForBackup();await active;return await fn();}finally{resume?.();backupPaused=false;}};
+    return {server,accounts,workspaces,notifications,deliveries,stop,quietSnapshot};
   }catch(e){accounts.close();throw e;}
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
@@ -40,6 +42,10 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   }
   const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport});
   await fs.writeFile(path.join(storage,'hosted-scope.json'),JSON.stringify({mode:'hosted_staging',realEmailEnabled:Boolean(transport),aiWorkersEnabled:false,realPaymentsEnabled:false,cloudArchiveActive:false})+'\n',{mode:0o600});
+  let backups;
+  try{backups=await createAutomaticBackups({storage,release:process.env.RENDER_GIT_COMMIT,quietSnapshot:app.quietSnapshot,transport});}
+  catch{console.error('MOLYVI_AUTOMATIC_BACKUP_STARTUP_BLOCKED');await reportBackupStartupFailure(transport);}
   app.server.listen(port,'0.0.0.0',()=>console.log(JSON.stringify({status:'ready',mode:'hosted_staging',port,realEmailEnabled:Boolean(transport)})));
-  const shutdown=()=>{void app.stop().then(()=>process.exit(0));};process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);
+  app.server.once('listening',()=>backups?.start());
+  const shutdown=()=>{void (async()=>{await backups?.stop();await app.stop();process.exit(0);})();};process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);
 }
