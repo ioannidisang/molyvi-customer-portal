@@ -1,10 +1,12 @@
-// Private, bucket-scoped transport. No bucket creation, ACL, delete or public URL APIs.
+// Private, bucket-scoped transport; deletion is restricted to catalogued backups.
 import fs from 'node:fs/promises';
 import {createReadStream,createWriteStream} from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
+import {R2_LIMITS} from './r2-budget.mjs';
+import {retentionKey} from './retention.mjs';
 const BUCKET='molyvi-private-backups',MAX_ENCRYPTED=512_000_000;
 const assert=(v,code)=>{if(!v)throw Error(code);};
 export function r2Options(c){
@@ -29,11 +31,25 @@ export async function createR2Transport(config,{sdk,budget}={}){
   function verifiedMetadata(result,e){assert(result.ContentLength===e.bytes&&result.Metadata?.['molyvi-sha256']===e.sha256,'R2_REMOTE_BYTES_MISMATCH');}
   async function head(key,e){objectKey(key);expected(e);const result=await send('HeadObject',{Bucket:BUCKET,Key:key});verifiedMetadata(result,e);return result;}
   return {
+    async verify(key,receipt){return head(key,receipt);},
+    async list(){
+      const r=await send('ListObjectsV2',{Bucket:BUCKET,MaxKeys:21}),rows=r.Contents??[];
+      assert(!r.IsTruncated&&rows.length<=R2_LIMITS.objects&&rows.every(x=>typeof x.Key==='string'&&Number.isSafeInteger(x.Size)&&x.Size>=0)&&rows.reduce((n,x)=>n+x.Size,0)<=R2_LIMITS.storedBytes,'R2_BUDGET_STOP_STORAGE');
+      return rows.map(x=>({Key:x.Key,Size:x.Size,ETag:x.ETag}));
+    },
+    requireDeleteBudget(count){assert(Number.isSafeInteger(count)&&count>=0&&count<=20,'R2_DELETE_COUNT_INVALID');assert(budget.summary().requests+count*3+(count?1:0)<=R2_LIMITS.requests,'R2_BUDGET_STOP_REQUESTS');},
+    async deleteVerified(r){
+      retentionKey(r.key);expected(r);assert(typeof r.etag==='string'&&r.etag.length>0,'R2_DELETE_ETAG_REQUIRED');
+      const before=await head(r.key,r);assert(before.ETag===r.etag,'R2_DELETE_OBJECT_CHANGED');
+      await send('DeleteObject',{Bucket:BUCKET,Key:r.key});
+      let absent=false;try{await send('HeadObject',{Bucket:BUCKET,Key:r.key});}catch(e){if(e.httpStatus!==404)throw e;absent=true;}
+      assert(absent,'R2_DELETE_NOT_CONFIRMED');return {status:'PASS',key:r.key,confirmedAbsent:true};
+    },
     async upload({file,key,receipt}){
       objectKey(key);expected(receipt);file=await safeLocal(file);assert((await fs.stat(file)).isFile(),'R2_LOCAL_NOT_FILE');
       const h=await fs.open(file,'r');try{const prefix=Buffer.alloc(16);await h.read(prefix,0,16,0);assert(prefix.toString().startsWith('MOLYVI-BACKUP-1\n'),'R2_ENCRYPTED_ARCHIVE_ONLY');}finally{await h.close();}
       const actual=await checksum(file);assert(actual.bytes===receipt.bytes&&actual.sha256===receipt.sha256,'R2_SOURCE_HASH_MISMATCH');
-      try{await head(key,receipt);return {status:'PASS',duplicate:true,key,bytes:actual.bytes,sha256:actual.sha256};}catch(e){if(e.httpStatus!==404)throw e;}
+      try{const existing=await head(key,receipt);return {status:'PASS',duplicate:true,key,bytes:actual.bytes,sha256:actual.sha256,etag:existing.ETag};}catch(e){if(e.httpStatus!==404)throw e;}
       const list=await send('ListObjectsV2',{Bucket:BUCKET,MaxKeys:21});assert(!list.IsTruncated,'R2_BUDGET_STOP_STORAGE');budget.checkStorage(list.Contents??[],actual.bytes);
       budget.reserve({uploadBytes:actual.bytes});
       const body=createReadStream(file);

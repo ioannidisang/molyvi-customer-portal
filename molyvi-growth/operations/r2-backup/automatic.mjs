@@ -6,12 +6,17 @@ import {snapshot,encryptSnapshot,restoreSnapshot,inventory} from './backup.mjs';
 import {R2Budget} from './r2-budget.mjs';
 import {createR2Transport,r2Options} from './r2-transport.mjs';
 import {BackupScheduler} from './scheduler.mjs';
+import {RetentionCatalog,RETENTION_POLICY,seedVerifiedLegacy,rotateVerifiedBackups} from './retention.mjs';
 const BASE='/opt/render/project/src/briefs',CONTROL=BASE+'/molyvi-r2-access';
 const SOURCE=BASE+'/molyvi-hosted-staging',ROOT=BASE+'/molyvi-r2-automatic';
 const KEY=BASE+'/molyvi-r2-recovery/20261015-r1/recovery-key.bin';
 const KEY_HASH='7a9e0977332bf8d1a1411790d2aff1a3963eb2a0828546ab3b6ed57a8b9b2852';
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 const assert=(v,m)=>{if(!v)throw Error(m);};
+async function writeProof(file,value){
+  const h=await fs.open(file,'wx',0o600);try{await h.writeFile(JSON.stringify(value,null,2)+'\n');await h.sync();}finally{await h.close();}
+  if(process.platform!=='win32'){const d=await fs.open(path.dirname(file),'r');try{await d.sync();}finally{await d.close();}}
+}
 async function privatePath(file){
   let current=path.parse(file).root;
   for(const bit of file.slice(current.length).split(path.sep).filter(Boolean)){current=path.join(current,bit);assert(!(await fs.lstat(current)).isSymbolicLink(),'BACKUP_PRIVATE_PATH_SYMLINK');}
@@ -27,12 +32,19 @@ export async function createAutomaticBackups({storage,release,quietSnapshot,tran
   const require=createRequire(CONTROL+'/runtime/package.json');
   assert(require('@aws-sdk/client-s3/package.json').version==='3.1152.0','BACKUP_SDK_VERSION_REQUIRED');const sdk=require('@aws-sdk/client-s3');
   await fs.mkdir(ROOT,{recursive:true,mode:0o700});await privatePath(ROOT);
+  let catalog;
+  try{
+    const file=CONTROL+'/retention.json';await privatePath(file);const policy=JSON.parse(await fs.readFile(file,'utf8'));
+    assert(Object.keys(policy).sort().join(',')==='enabled,policy,schemaVersion'&&policy.schemaVersion===1&&policy.enabled===true&&policy.policy===RETENTION_POLICY,'RETENTION_ACTIVATION_INVALID');
+    catalog=await new RetentionCatalog(ROOT+'/retention.sqlite').ready();
+  }catch(e){if(e.code!=='ENOENT')throw e;}
   const budget=await new R2Budget(CONTROL+'/budget.sqlite').ready();
   const r2=await createR2Transport(access,{sdk,budget});
   const scheduler=await new BackupScheduler({file:ROOT+'/schedule.sqlite',firstAt:Date.parse(config.firstAt),
-    notify:config.notifyOwner&&transport?({messageId,code})=>transport.send({messageId,payload:{to:'aioannidis@kooqie.com',kind:'backup_alert',subject:'Molyvi · Χρειάζεται έλεγχος αντιγράφων ασφαλείας',text:'Η αυτόματη δημιουργία αντιγράφων ασφαλείας σταμάτησε με ασφάλεια.\nΈνδειξη: '+code+'\nΤα όρια κόστους δεν αυξήθηκαν. Τα υπάρχοντα αντίγραφα διατηρούνται.\nΑπαιτείται έλεγχος πριν από νέα προσπάθεια.'}}):null,
+    notify:config.notifyOwner&&transport?({messageId,code})=>transport.send({messageId,payload:{to:'aioannidis@kooqie.com',kind:'backup_alert',subject:'Molyvi · Χρειάζεται έλεγχος αντιγράφων ασφαλείας',text:'Η αυτόματη δημιουργία αντιγράφων ασφαλείας σταμάτησε με ασφάλεια.\nΈνδειξη: '+code+'\nΤα όρια κόστους δεν αυξήθηκαν.\nΑπαιτείται έλεγχος πριν από νέα προσπάθεια.'}}):null,
     perform:async runId=>{
       const dir=ROOT+'/'+runId;assert(/^auto-[0-9]{14}-[a-f0-9]{8}$/.test(runId),'BACKUP_RUN_ID');
+      if(catalog)await seedVerifiedLegacy(catalog,r2);
       // Local disk guard, before copying. No resize or paid resource is created.
       const sourceBytes=(await inventory(SOURCE,{skipSqliteSidecars:true})).reduce((n,e)=>n+e.bytes,0);
       const disk=await fs.statfs(ROOT);assert(disk.bavail*disk.bsize>=sourceBytes*4+512_000_000,'BACKUP_LOCAL_DISK_LIMIT');
@@ -49,7 +61,10 @@ export async function createAutomaticBackups({storage,release,quietSnapshot,tran
         const download=await r2.download({file:dir+'/downloaded.mlvb',key:objectKey,receipt});
         const restored=await restoreSnapshot({file:dir+'/downloaded.mlvb',key,output:dir+'/restored',expectedSha256:receipt.sha256});
         const result={status:'PASS',createdAt:new Date().toISOString(),runId,release,objectKey,receipt,upload,download,restore:restored.report,budget:budget.summary(),remoteDeletion:false};
-        await fs.writeFile(dir+'/receipt.json',JSON.stringify(result,null,2)+'\n',{flag:'wx',mode:0o600});
+        // A recoverable proof is durable before any rotation or deletion begins.
+        await writeProof(dir+'/backup-verified.json',result);
+        if(catalog){result.retention=await rotateVerifiedBackups({catalog,r2,result});result.remoteDeletion=result.retention.deleted.length>0;result.budget=budget.summary();}
+        await writeProof(dir+'/receipt.json',result);
         // Only this fresh run's scratch children. Receipts and R2 objects remain.
         for(const name of ['snapshot','restored'])await fs.rm(path.join(dir,name),{recursive:true});
         for(const name of ['service-backup.mlvb','downloaded.mlvb'])await fs.unlink(path.join(dir,name));
@@ -57,7 +72,7 @@ export async function createAutomaticBackups({storage,release,quietSnapshot,tran
       }finally{key?.fill(0);}
     }
   }).ready();
-  const stop=scheduler.stop.bind(scheduler);scheduler.stop=async()=>{await stop();r2.close();budget.close();};return scheduler;
+  const stop=scheduler.stop.bind(scheduler);scheduler.stop=async()=>{await stop();r2.close();budget.close();catalog?.close();};return scheduler;
 }
 
 export async function reportBackupStartupFailure(transport){
