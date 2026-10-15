@@ -23,6 +23,7 @@ import {previewStoreContent,reviewStoreContent} from './lib/store-content.mjs';
 import {createServicePaymentBridge} from './lib/service-payment-bridge.mjs';
 import {createServiceProductionQueue} from './lib/service-production-queue.mjs';
 import {createRequestBoundary} from './lib/hosted-request-boundary.mjs';
+import {RequestSlots} from './lib/request-slots.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const json=(res,status,body,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(body));};
@@ -62,7 +63,8 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     });
     return visible;
   };
-  let closing=false,activeDownloads=0,activeRequests=0;
+  let closing=false,activeArchives=0;
+  const requestSlots=new RequestSlots();
   const signalPhotoQueue=()=>{if(!closing)void photoQueue.tick().catch(()=>{/* Persisted queue state retains evidence and bounded recovery. */});};
   const signalProductQueue=()=>{if(!closing)void productQueue.tick().catch(()=>{/* Persisted attempts prevent blind retries. */});};
   const pump=session=>{
@@ -82,8 +84,11 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   };
   const server=http.createServer(async(req,res)=>{
     if(boundary.hosted){
-      if(activeRequests>=8){res.setHeader('Connection','close');return json(res,429,{error:'SERVER_BUSY'});}
-      activeRequests++;let released=false;const release=()=>{if(!released){released=true;activeRequests--;}};res.once('finish',release);res.once('close',release);
+      const controller=new AbortController(),abort=()=>controller.abort();res.once('close',abort);
+      let release;
+      try{release=await requestSlots.acquire({wait:['GET','HEAD'].includes(req.method)&&req.url?.startsWith('/customer-files/'),signal:controller.signal});}
+      catch{res.off('close',abort);if(res.destroyed)return;res.setHeader('Connection','close');res.setHeader('Retry-After','5');return json(res,429,{error:'SERVER_BUSY'});}
+      if(res.destroyed){release();return;}res.off('close',abort);res.once('finish',release);res.once('close',release);
     }
     try {
       const port=server.address()?.port,{origin,client,health}=boundary.inspect(req,port),url=new URL(req.url,origin);
@@ -277,7 +282,8 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
         const token=String(req.headers.cookie??'').split(';').map(p=>p.trim()).find(p=>p.startsWith(boundary.cookieName+'='))?.slice(boundary.cookieName.length+1);
         const session=customerAccess.accounts.authenticate(token),match=url.pathname.match(/^\/customer-files\/([a-f0-9-]+)\/(.+)$/);
         if(!match||url.search)throw new IntakeError('NOT_FOUND',404);
-        if(activeDownloads>=2){res.setHeader('Retry-After','5');throw new IntakeError('DOWNLOAD_BUSY',429);}activeDownloads++;
+        const archive=match[2].endsWith('.zip');
+        if(archive&&activeArchives>=2){res.setHeader('Retry-After','5');throw new IntakeError('DOWNLOAD_BUSY',429);}if(archive)activeArchives++;
         let file;
         try{
           file=typeof customerAccess.deliveries.openForStream==='function'?await customerAccess.deliveries.openForStream(session,match[1],match[2]):await customerAccess.deliveries.read(session,match[1],match[2]);
@@ -286,7 +292,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
           else if(file.handle)await pipeline(file.handle.createReadStream({start:0,autoClose:false,highWaterMark:64*1024}),res);
           else res.end(file.bytes);
           return;
-        }finally{await file?.handle?.close();activeDownloads--;}
+        }finally{await file?.handle?.close();if(archive)activeArchives--;}
       }
       const name=new Map([['/',customerAccess?'customer.html':'index.html'],['/customer/','customer.html'],['/customer.js','customer.js'],['/customer.css','customer.css'],['/workspace/','index.html'],['/workspace.js','workspace.js'],['/products.js','products.js'],['/catalog-editor.js','catalog-editor.js'],['/gallery.js','gallery.js'],['/shipping.js','shipping.js'],['/merchant-payments.js','merchant-payments.js'],['/store-content.js','store-content.js'],['/workspace.css','workspace.css']]).get(url.pathname);
       if(name?.startsWith('customer')&&!customerAccess)throw new IntakeError('NOT_FOUND',404);
