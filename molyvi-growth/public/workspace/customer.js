@@ -7,6 +7,8 @@ async function api(url,payload){const response=await fetch(url,payload?{method:'
 function render(){
   $('login-panel').hidden=Boolean(account);$('account-panel').hidden=!account;$('logout').hidden=!account;
   $('request-code').hidden=Boolean(account)||!codeRequests;$('code-request-help').hidden=Boolean(account)||!codeRequests;
+  $('code-help').textContent=realEmailEnabled?'Ζήτησε έναν νέο κωδικό στο email σου και χρησιμοποίησέ τον μέσα σε 15 λεπτά. Κάθε κωδικός ισχύει για μία σύνδεση.':'Στην τοπική δοκιμή χρησιμοποιούμε τον ιδιωτικό κωδικό ελέγχου.';
+  $('code-request-help').textContent=realEmailEnabled?'Συμπλήρωσε το email σου και επίλεξε «Νέος κωδικός». Αν δεν τον βρεις, έλεγξε και την ανεπιθύμητη αλληλογραφία.':'Στη δοκιμή χωρίς αποστολέα, το μήνυμα αποθηκεύεται ιδιωτικά για τον εσωτερικό έλεγχο.';
   if(!account)return;
   $('greeting').textContent=`Καλώς επέστρεψες, ${account.account.name}.`;
   const projects=$('projects');projects.replaceChildren();
