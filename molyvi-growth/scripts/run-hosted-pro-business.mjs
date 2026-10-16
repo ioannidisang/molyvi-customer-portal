@@ -5,11 +5,12 @@ import {PRIVATE_ROOT} from '../lib/intake-store.mjs';
 import {ordinaryFile} from '../lib/service-handoff.mjs';
 import {validateControlledProRequest} from '../lib/hosted-controlled-pro.mjs';
 import {createCodexProductProvider} from '../lib/codex-product-provider.mjs';
-const {values}=parseArgs({options:{request:{type:'string'},out:{type:'string'},storage:{type:'string'}}});
+const {values}=parseArgs({options:{request:{type:'string'},out:{type:'string'},storage:{type:'string'},assets:{type:'string'}}});
 const within=file=>{const r=path.relative(PRIVATE_ROOT,path.resolve(file));return r&&!r.startsWith('..')&&!path.isAbsolute(r);};
 if(!values.request||!values.out||!values.storage||![values.request,values.out,values.storage].every(within))throw Error('PRIVATE_OPERATOR_PATHS_REQUIRED');
 const request=validateControlledProRequest(JSON.parse(await ordinaryFile(path.dirname(values.request),path.basename(values.request))));
-const provider=createCodexProductProvider({storage:values.storage});
+if(request.packet.kind==='materials'&&(!values.assets||!within(values.assets)))throw Error('PRIVATE_OPERATOR_ASSETS_REQUIRED');
+const provider=createCodexProductProvider({storage:values.storage,...(request.packet.kind==='materials'?{resolveAsset:asset=>path.join(values.assets,asset.sha256+'.bin')}:{})});
 const login=await provider.preflight();
 // Reserve output before inference, preventing an accidental second execution.
 const output=await fs.open(values.out,'wx',0o600);

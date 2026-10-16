@@ -52,13 +52,14 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   const paymentReceiver=hostedTestPayments??paymentBridge;
   const sessionCookie=(session)=>{const token=crypto.randomBytes(32).toString('hex');sessions.set(token,session);return `molyvi_demo=${token}; HttpOnly; SameSite=Strict; Path=/`;};
   const photoQueue=createPhotoReviewQueue({...reviewQueueOptions,store,provider:photoReviewer,enabled:Boolean(photoReviewer)});
-  const productQueue=createProductProductionQueue({...productionQueueOptions,store,provider:productProvider,enabled:Boolean(productProvider)});
+  const scopedProductProvider=hostedControlledPro?.productProvider??productProvider;
+  const productQueue=createProductProductionQueue({...productionQueueOptions,...hostedControlledPro?.productOptions,store,provider:scopedProductProvider,enabled:Boolean(scopedProductProvider)});
   const serviceQueue=createServiceProductionQueue({...serviceProductionOptions,...hostedControlledPro?.options,store,provider:hostedControlledPro?.provider??serviceProvider,enabled:Boolean(hostedControlledPro??serviceProvider)});
   const view=record=>{
     const visible=viewWorkspace(record),queues=publicPhotoReviewQueue(record);
     visible.serviceProduction=serviceQueue.status();
     visible.productProduction=publicProductProductionQueue(record).map(job=>
-      !productProvider&&['queued','running'].includes(job.status)?{...job,status:'paused',reason:'provider_unavailable'}:
+      !scopedProductProvider&&['queued','running'].includes(job.status)?{...job,status:'paused',reason:'provider_unavailable'}:
       productQueue.status().lastError&&['queued','running'].includes(job.status)?{...job,status:'paused',reason:'automatic_production_unavailable'}:job);
     visible.photoClaims=visible.photoClaims.map(claim=>{
       let reviewQueue=queues.find(item=>item.claimId===claim.id)??null;
@@ -319,10 +320,10 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   server.on('close',()=>{closing=true;sessions.clear();void photoQueue.stop().catch(()=>{});void productQueue.stop().catch(()=>{});void serviceQueue.stop().catch(()=>{});});
   server.pauseForBackup=async()=>{
     if(!boundary.hosted||backupPaused||closing)throw Error('BACKUP_DRAIN_UNAVAILABLE');
-    backupPaused=true;const end=Date.now()+30_000,resume=serviceQueue.suspend();
-    try{while(requestSlots.active||serviceQueue.status().active){if(Date.now()>end)throw Error('BACKUP_DRAIN_TIMEOUT');await new Promise(r=>setTimeout(r,25));}}
-    catch(e){resume();backupPaused=false;throw e;}
-    return ()=>{resume();backupPaused=false;};
+    backupPaused=true;const end=Date.now()+30_000,resume=serviceQueue.suspend(),resumeProducts=productQueue.suspend();
+    try{while(requestSlots.active||serviceQueue.status().active||productQueue.status().running){if(Date.now()>end)throw Error('BACKUP_DRAIN_TIMEOUT');await new Promise(r=>setTimeout(r,25));}}
+    catch(e){resume();resumeProducts();backupPaused=false;throw e;}
+    return ()=>{resume();resumeProducts();backupPaused=false;};
   };
   server.drainWorkers=async()=>{closing=true;await Promise.allSettled([...pumps.values(),photoQueue.stop(),productQueue.stop(),serviceQueue.stop()]);};
   // Trusted local lifecycle handle; this is never exposed through HTTP.

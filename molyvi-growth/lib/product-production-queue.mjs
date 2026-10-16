@@ -60,14 +60,17 @@ const currentRequest = (project, job) => {
 // lock must be inspected and removed by an operator, never guessed from age.
 const owners = new Map();
 export function createProductProductionQueue({store, provider, enabled = false, dailyAttemptLimit = 12, timeoutMs = 180000,
-  pollMs = 1000, now = () => new Date(), projectIds=null, requireServiceTestPayment=false} = {}) {
+  pollMs = 1000, now = () => new Date(), projectIds=null, requireServiceTestPayment=false, requestIds=null, lifetimeAttemptLimit=null} = {}) {
   if (!store || !Number.isSafeInteger(dailyAttemptLimit) || dailyAttemptLimit < 1 || dailyAttemptLimit > 1000
       || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600000 || !Number.isSafeInteger(pollMs) || pollMs < 1
       ||typeof requireServiceTestPayment!=='boolean'||projectIds!==null&&(!Array.isArray(projectIds)||!projectIds.length||projectIds.some(id=>!uuid(id))||new Set(projectIds).size!==projectIds.length)
-      ||requireServiceTestPayment&&projectIds===null) fail('INVALID_PRODUCTION_QUEUE_CONFIG');
+      ||requireServiceTestPayment&&projectIds===null
+      ||requestIds!==null&&(!Array.isArray(requestIds)||!requestIds.length||requestIds.some(id=>!uuid(id))||new Set(requestIds).size!==requestIds.length)
+      ||lifetimeAttemptLimit!==null&&(!Number.isSafeInteger(lifetimeAttemptLimit)||lifetimeAttemptLimit<1||lifetimeAttemptLimit>5||requestIds===null)) fail('INVALID_PRODUCTION_QUEUE_CONFIG');
   const produce = typeof provider === 'function' ? provider : provider?.produce?.bind(provider);
   const key = path.resolve(store.storage), owner = Symbol('product-production'), lockToken = crypto.randomUUID(), lockDirectory = path.join(key, '.product-production-worker.lock');
-  let lockHeld = false, releasing, initialized = false, initializing, inflight, timer, stopped = false, controller, outstanding = false, lastError = null;
+  let lockHeld = false, releasing, initialized = false, initializing, inflight, timer, stopped = false, suspended=false, controller, outstanding = false, lastError = null;
+  const scopedJobs=record=>jobs(record).filter(job=>requestIds===null||requestIds.includes(job.requestId));
   const date = () => stamp(now());
   async function acquireLock() {
     try {await fs.mkdir(lockDirectory, {mode: 0o700});} catch (error) {if (error.code === 'EEXIST') fail('PRODUCTION_WORKER_LOCKED'); throw error;}
@@ -116,7 +119,7 @@ export function createProductProductionQueue({store, provider, enabled = false, 
           // Restart recovers only saved customer requests; it does not request
           // more texts or images. Ambiguous attempts are never blindly retried.
           enqueuePendingProductProduction(project, {now: date()});
-          for (const job of jobs(project)) if (job.status === 'running') {
+          for (const job of scopedJobs(project)) if (job.status === 'running') {
             job.status = job.savedResult ? 'result_ready' : 'paused';
             if (!job.savedResult) {job.reason = 'interrupted_attempt'; job.pausedAt = date();}
           }
@@ -146,11 +149,13 @@ export function createProductProductionQueue({store, provider, enabled = false, 
     const all = await projects(), current = date();
     const attempts = all.reduce((sum, {record}) => sum + jobs(record).filter(job => job.attemptStartedAt?.slice(0, 10) === current.slice(0, 10)).length, 0);
     for (const {session, record} of all) {
-      const saved = jobs(record).find(job => job.status === 'result_ready' && job.savedResult);
+      const saved = scopedJobs(record).find(job => job.status === 'result_ready' && job.savedResult);
       if (saved) return importSaved(session, saved);
     }
-    for (const {session, record} of all) for (const job of jobs(record).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const lifetimeAttempts=all.reduce((n,{record})=>n+scopedJobs(record).filter(job=>job.attemptStartedAt).length,0);
+    for (const {session, record} of all) for (const job of scopedJobs(record).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
       if (job.status !== 'queued') continue;
+      if(lifetimeAttemptLimit!==null&&lifetimeAttempts>=lifetimeAttemptLimit)return {processed:false,reason:'lifetime_attempt_limit'};
       if (!currentRequest(record, job)) {await update(session, job.id, j => {j.status = 'cancelled'; j.reason = 'source_or_request_changed';}); continue;}
       if (attempts >= dailyAttemptLimit) {await update(session, job.id, j => {j.reason = 'daily_attempt_limit';}); return {processed: false, reason: 'daily_attempt_limit'};}
       let packet;
@@ -200,6 +205,7 @@ export function createProductProductionQueue({store, provider, enabled = false, 
     return {processed: false, reason: 'idle'};
   }
   function tick() {
+    if(suspended)return Promise.resolve({processed:false,reason:'suspended'});
     if (inflight) return inflight;
     inflight = one().then(result => {lastError = null; return result;}).catch(error => {lastError = error.code ?? 'PRODUCTION_QUEUE_ERROR'; throw error;}).finally(() => {inflight = null;});
     return inflight;
@@ -212,6 +218,7 @@ export function createProductProductionQueue({store, provider, enabled = false, 
       void tick().catch(() => {}); return this.status();
     },
     tick,
+    suspend(){suspended=true;return ()=>{suspended=false;};},
     async drain({maxPasses = dailyAttemptLimit} = {}) {
       if (!Number.isSafeInteger(maxPasses) || maxPasses < 1 || maxPasses > 1000) fail('INVALID_PRODUCTION_QUEUE_CONFIG');
       const results = []; for (let i = 0; i < maxPasses; i++) {const result = await tick(); results.push(result); if (!result.processed) break;} return results;

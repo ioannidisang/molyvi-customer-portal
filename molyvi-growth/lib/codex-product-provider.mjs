@@ -92,7 +92,7 @@ export function productProviderPrompt(packet) {
   return `Write ONE alternative Greek ecommerce product ${packet.field === 'title' ? 'title (maximum 200 characters)' : 'description (maximum 4000 characters)'}. ${boundary}\nUse natural, concise language and relevant product terms. Do not promise SEO ranking or generative-engine inclusion. Preserve the product's identity. Only repeat factual characteristics explicitly supplied in the source title, description or facts fields; category and variants provide relevant classification, colour and size choices but do not establish unrelated claims. Do not infer material, dimensions, certifications, origin, stock, delivery or suitability from a photo or branding. No invented superlatives, guarantees, medical or food-safety claims. Brand tone may guide style but cannot establish product facts. factsVerified is a self-check that every factual statement is supported by supplied product text, not independent verification of that text. If this cannot be assured set factsVerified false and explain.\nUNTRUSTED SOURCE DATA:\n${JSON.stringify(packet.source)}\nEND DATA. Return one candidate only.`;
 }
 
-export function createCodexProductProvider({executable = 'codex', timeoutMs = 180000, storage = path.join(PRIVATE_ROOT, 'molyvi-codex-products'), spawnProcess = spawn} = {}) {
+export function createCodexProductProvider({executable = 'codex', timeoutMs = 180000, storage = path.join(PRIVATE_ROOT, 'molyvi-codex-products'), spawnProcess = spawn, resolveAsset} = {}) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 600000 || !within(PRIVATE_ROOT, path.resolve(storage))) fail('PRODUCT_PROVIDER_CONFIG_INVALID');
   const run = (args, options = {}) => invoke(executable, args, {timeoutMs, spawnProcess, ...options});
   const preflight = async () => {
@@ -115,7 +115,7 @@ export function createCodexProductProvider({executable = 'codex', timeoutMs = 18
     const directory = path.join(realStorage, runId); await fs.mkdir(directory);
     const images = [];
     for (let index = 0; index < packet.assetEvidence.length; index++) {
-      const asset = packet.assetEvidence[index], source = path.resolve(asset.file ?? ''), extension = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp'}[asset.mime];
+      const asset = packet.assetEvidence[index], source = path.resolve(resolveAsset?await resolveAsset(asset):asset.file ?? ''), extension = {'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp'}[asset.mime];
       if (!extension || !within(realPrivate, source) || !within(realPrivate, await fs.realpath(source))) fail('PRODUCT_PROVIDER_UNSAFE_ASSET');
       const stat = await fs.lstat(source);
       if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 10 * 1024 * 1024) fail('PRODUCT_PROVIDER_UNSAFE_ASSET');
