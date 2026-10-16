@@ -13,8 +13,9 @@ import {createRequestBoundary} from './lib/hosted-request-boundary.mjs';
 import {createAutomaticBackups,reportBackupStartupFailure} from './operations/r2-backup/automatic.mjs';
 import {createHostedTestPayments,loadHostedTestPaymentConfig} from './lib/hosted-test-payments.mjs';
 import {createHostedControlledPro,loadHostedControlledProConfig} from './lib/hosted-controlled-pro.mjs';
+import {loadHostedPhotoConfig,runHostedPhotoOperation} from './lib/hosted-photo-operation.mjs';
 
-export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport,testPaymentConfig,controlledProConfig}={}){
+export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport,testPaymentConfig,controlledProConfig,photoOperationConfig}={}){
   createRequestBoundary({publicOrigin,healthHosts});
   const accounts=await new CustomerStore(path.join(storage,'accounts')).ready();let server;
   try{
@@ -22,6 +23,7 @@ export async function createHostedCustomerServer({publicOrigin,healthHosts=[],st
       deliveries=await new CustomerDelivery({accounts,workspaces,storage:path.join(storage,'deliveries'),notifications}).ready();
     const testPayments=testPaymentConfig?createHostedTestPayments({store:workspaces,notifications,config:testPaymentConfig}):null;
     const controlledPro=controlledProConfig?await createHostedControlledPro({config:controlledProConfig,storage:path.join(storage,'controlled-pro'),store:workspaces,accounts}):null;
+    if(photoOperationConfig){if(controlledProConfig)throw Error('HOSTED_PHOTO_OPERATION_EXCLUSIVE');await runHostedPhotoOperation({config:photoOperationConfig,store:workspaces,accounts,storage:path.join(storage,'controlled-photos')});}
     server=await createWorkspaceApp({storage:workspaces.storage,customerAccess:{accounts,notifications,deliveries,workspaces},hostedTestPayments:testPayments,hostedControlledPro:controlledPro,deployment:{publicOrigin,healthHosts}});
     let interval,stopping=false,active,stopPromise,backupPaused=false;
     const tick=()=>{if(!stopping&&!backupPaused&&!active)active=notifications.tick().catch(()=>{}).finally(()=>{active=null;});};
@@ -46,8 +48,9 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   }
   const testPaymentConfig=await loadHostedTestPaymentConfig({enabled:process.env.MOLYVI_HOSTED_TEST_PAYMENTS_ENABLED==='true'});
   const controlledProConfig=await loadHostedControlledProConfig({enabled:process.env.MOLYVI_HOSTED_CONTROLLED_PRO_ENABLED==='true'});
-  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport,testPaymentConfig,controlledProConfig});
-  await fs.writeFile(path.join(storage,'hosted-scope.json'),JSON.stringify({mode:'hosted_staging',realEmailEnabled:Boolean(transport),testPaymentsEnabled:Boolean(app.testPayments),controlledLocalProEnabled:Boolean(controlledProConfig),aiWorkersEnabled:false,realPaymentsEnabled:false,cloudArchiveActive:false})+'\n',{mode:0o600});
+  const photoOperationConfig=await loadHostedPhotoConfig({enabled:process.env.MOLYVI_HOSTED_PHOTO_IMPORT_ENABLED==='true'});
+  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport,testPaymentConfig,controlledProConfig,photoOperationConfig});
+  await fs.writeFile(path.join(storage,'hosted-scope.json'),JSON.stringify({mode:'hosted_staging',realEmailEnabled:Boolean(transport),testPaymentsEnabled:Boolean(app.testPayments),controlledLocalProEnabled:Boolean(controlledProConfig),photoStartupOperationEnabled:Boolean(photoOperationConfig),aiWorkersEnabled:false,realPaymentsEnabled:false,cloudArchiveActive:false})+'\n',{mode:0o600});
   let backups;
   try{backups=await createAutomaticBackups({storage,release:process.env.RENDER_GIT_COMMIT,quietSnapshot:app.quietSnapshot,transport});}
   catch{console.error('MOLYVI_AUTOMATIC_BACKUP_STARTUP_BLOCKED');await reportBackupStartupFailure(transport);}

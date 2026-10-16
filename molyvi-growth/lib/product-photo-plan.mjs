@@ -23,7 +23,8 @@ export function productPhotoPlan(record,productId){
   if(photoWork?.status!=='succeeded'||photoWork.result?.output.delivery!=='photo_presentation_plan')fail('PHOTOS_DEPENDENCY_PENDING');
   if(sha(photoPresentationPlan(record))!==photoWork.result.hash)fail('PHOTOS_RESULT_STALE');
   const product=submission.product,count=packageForOrder(record.order).entitlements.photoSlotsPerUnit;
-  const category=Object.hasOwn(scenes,product.category)?product.category:'other';
+  const categoryName=({'Αντικείμενα σπιτιού':'home','Ένδυση':'clothing','Κοσμήματα':'jewelry'})[product.category]??product.category;
+  const category=Object.hasOwn(scenes,categoryName)?categoryName:'other';
   const sceneOptions=scenes[category]??['A restrained studio still life preserving the visible product.','A second clean studio composition.','A soft daylight studio detail.','A neutral tabletop composition.'];
   const slots=visualUnitsFor(product).flatMap(unit=>Array.from({length:count},(_,index)=>{
     const sources=unit.sourceAssetIds.map(id=>{
