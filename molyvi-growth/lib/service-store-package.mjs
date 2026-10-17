@@ -6,7 +6,7 @@ import {serviceProductionEligible,applyServiceBusinessResult} from './service-pr
 import {approvedBrandPresentation} from './brand-presentation.mjs';
 import {catalogCounts,normalizeCatalogFields} from './catalog-model.mjs';
 import {finalizeProductTexts} from './product-text.mjs';
-import {gallerySelectionSnapshot} from './product-gallery.mjs';
+import {gallerySelectionSnapshot,photoSourceForSlot} from './product-gallery.mjs';
 import {productPhotoPlan} from './product-photo-plan.mjs';
 import {preparePhotoExecution} from './product-photo-execution.mjs';
 import {validateSessionExecution} from './session-execution.mjs';
@@ -44,6 +44,21 @@ function checkedBytes(asset,items){
 }
 function checkedPhotoLineage(record,product,photo,asset,work){
   const gallery=record.productGalleries[product.id],slot=gallery.slots.find(item=>item.id===photo.slotId),candidate=slot.candidates.find(item=>item.id===photo.candidateId);
+  if(candidate.kind==='regeneration'){
+    // Completed server-owned requests are the trusted receipt for a native
+    // regeneration. They must match this exact frozen product/unit/slot and
+    // output. Selection never grants acceptance or initiates another AI job.
+    const requests=gallery.slots.flatMap(item=>item.requests).filter(item=>item.id===candidate.requestId),request=requests[0];
+    if(requests.length!==1||!uuid(candidate.requestId)||request.kind!=='regeneration'||request.status!=='completed'||request.slotId!==slot.id||request.candidateId!==candidate.id||request.assetId!==asset.id||request.sourceHash!==gallery.sourceHash||!equal(request.source,photoSourceForSlot(gallery,slot.id))||request.costEur!==null)fail('SERVICE_PACKAGE_REGENERATION_RECEIPT_INVALID');
+    if(!['same_style','specific_change'].includes(request.mode)||typeof request.change!=='string'||request.change.length>2000||request.mode==='specific_change'&&!request.change.trim())fail('SERVICE_PACKAGE_REGENERATION_INSTRUCTIONS_INVALID');
+    const evidence=validateSessionExecution(request.executionEvidence,gallery.sourceHash);
+    if(evidence.tool!=='image_gen')fail('SERVICE_PACKAGE_REGENERATION_EVIDENCE_INVALID');
+    const initial=slot.candidates[0],initialAsset=record.generatedAssets[initial?.assetId];
+    if(initial?.kind!=='initial'||!initialAsset||initialAsset.productId!==product.id||initialAsset.sourceHash!==gallery.sourceHash||(initialAsset.visualUnitId??null)!==(slot.visualUnitId??null))fail('SERVICE_PACKAGE_REGENERATION_ORIGINAL_INVALID');
+    const original=checkedPhotoLineage(record,product,{...photo,candidateId:initial.id,assetId:initial.assetId},initialAsset,work);
+    return {kind:'regeneration',requestId:request.id,receiptHash:hash(request),executionId:evidence.executionId,inputHash:evidence.inputHash,outputSha256:asset.sha256,instructionsHash:hash({mode:request.mode,change:request.change,source:request.source}),
+      original:{candidateId:initial.id,assetId:initial.assetId,sha256:initialAsset.sha256,lineage:original},attestation:'trusted_session_regeneration_operator',providerBillingVerified:false,fullRenderedPromptHash:null};
+  }
   if(candidate.kind!=='initial')fail('SERVICE_PACKAGE_INITIAL_SELECTION_REQUIRED');
   const receipts=Object.values(record.productPilotImports??{}).filter(item=>item.kind==='photos'&&item.productId===product.id&&item.slotId===photo.slotId&&item.delivered?.assetId===asset.id);
   if(receipts.length!==1)fail('SERVICE_PACKAGE_PHOTO_RECEIPT_REQUIRED');
@@ -106,8 +121,12 @@ export function prepareServiceStorePackage(record,{targetStore,assets=[],sourceA
       return {...photo,position:photoIndex+1,fileName,mime:asset.mime,bytes:asset.bytes,alt:`${copy.title.text} — ${photo.role==='white'?'λευκό φόντο':`παρουσίαση ${photoIndex+1}`} (Molyvi Service QA)`,lineage};
     });
     const variants=product.variants.map((variant,variantIndex)=>{
-      if(!variant.sku||skus.has(variant.sku)||![100,200].includes(variant.priceMinor)||!Number.isInteger(variant.stock)||variant.stock<0||variant.stock>5)fail('SERVICE_PACKAGE_QA_VARIANT_INVALID');skus.add(variant.sku);
-      return {...variant,sourceSku:variant.sku,sku:`MS-${record.servicePurchase.receipt.orderId}-${record.id.slice(0,8).toUpperCase()}-${index+1}-${variantIndex+1}`,price:(variant.priceMinor/100).toFixed(2),trackInventory:true,continueSellingWhenOutOfStock:false,visualUnitId:product.visualUnits[0].id,imagePosition:1};
+      const sourceSku=variant.sku||null;
+      // SKU is optional in the frozen intake. Namespace only the derived TEST
+      // export; never fill a missing SKU back into the customer's submission.
+      if(sourceSku!==null&&skus.has(sourceSku)||![100,200].includes(variant.priceMinor)||!Number.isInteger(variant.stock)||variant.stock<0||variant.stock>5)fail('SERVICE_PACKAGE_QA_VARIANT_INVALID');
+      if(sourceSku!==null)skus.add(sourceSku);
+      return {...variant,sourceSku,sku:`MS-${record.servicePurchase.receipt.orderId}-${record.id.slice(0,8).toUpperCase()}-${index+1}-${variantIndex+1}`,price:(variant.priceMinor/100).toFixed(2),trackInventory:true,continueSellingWhenOutOfStock:false,visualUnitId:product.visualUnits[0].id,imagePosition:1};
     });
     const descriptionText=`${qa}\n${copy.description.text}`;
     return {productId:product.id,handle:`${namespace}-${product.id.slice(0,8)}`,title:`Molyvi Service QA — ${copy.title.text}`,descriptionText,descriptionHtml:descriptionText.split('\n').map(line=>`<p>${escapeHtml(line)}</p>`).join('\n'),status:'DRAFT',publishedOnOnlineStore:false,currency:'EUR',vendor:'Molyvi Service QA',type:product.category,tags:[namespace],variants,photos,source:{submissionHash,copyHash:hash(copy),workInputHash:hash(work.inputs),workResultHash:work.result.hash,galleryHash:selection.sourceHash,selectionHash:hash(selection)}};
