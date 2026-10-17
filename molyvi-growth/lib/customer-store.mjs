@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {prepareStorage,IntakeError} from './intake-store.mjs';
+import {FeedbackManagement,FEEDBACK_MANAGEMENT_SCHEMA} from './feedback-management.mjs';
 
 const hash=v=>crypto.createHash('sha256').update(v).digest('hex');
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v);
@@ -40,6 +41,7 @@ export class CustomerStore {
       CREATE INDEX IF NOT EXISTS delivery_feedback_account ON delivery_feedback(account_id,created);
       PRAGMA user_version=2;`);
     if(!this.db.prepare('PRAGMA table_info(mail_outbox)').all().some(c=>c.name==='created'))this.db.exec('ALTER TABLE mail_outbox ADD COLUMN created INTEGER NOT NULL DEFAULT 0; UPDATE mail_outbox SET created=next_at;');
+    this.db.exec(FEEDBACK_MANAGEMENT_SCHEMA);
     await fs.chmod(path.join(this.storage,'customers.sqlite'),0o600);
     return this;
   }
@@ -113,7 +115,8 @@ export class CustomerStore {
   delivery(accountId,id){if(!uuid(id))fail('NOT_FOUND',404);const r=this.db.prepare('SELECT d.* FROM deliveries d JOIN projects p ON p.id=d.project_id WHERE d.id=? AND p.account_id=?').get(id,accountId);if(!r)fail('NOT_FOUND',404);return r;}
   feedback(session,deliveryId){
     const delivery=this.delivery(session.accountId,deliveryId);
-    return {deliveryId,manifestHash:delivery.manifest_hash,items:this.db.prepare('SELECT id,category,message,created FROM delivery_feedback WHERE delivery_id=? AND account_id=? ORDER BY created,rowid').all(deliveryId,session.accountId).map(r=>({id:r.id,category:r.category,message:r.message,createdAt:new Date(r.created).toISOString(),status:'received'})),customerAccepted:false,workStarted:false,creditsCharged:false};
+    const manager=new FeedbackManagement(this);
+    return {deliveryId,manifestHash:delivery.manifest_hash,items:this.db.prepare('SELECT id,category,message,created FROM delivery_feedback WHERE delivery_id=? AND account_id=? ORDER BY created,rowid').all(deliveryId,session.accountId).map(r=>{const replies=manager.history(r.id);return {id:r.id,category:r.category,message:r.message,createdAt:new Date(r.created).toISOString(),status:replies.at(-1)?.status??'received',revision:replies.length,replies};}),customerAccepted:false,workStarted:false,creditsCharged:false};
   }
   recordFeedback(session,{deliveryId,manifestHash,requestId,category,message}){
     if(!uuid(requestId)||!['appearance','photos','text','seller','orders','policies','other'].includes(category)||typeof message!=='string'||!message.trim()||message.length>2000||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(message))fail('INVALID_FEEDBACK',422);
@@ -140,7 +143,7 @@ export class CustomerStore {
   }
   view(session){
     const a=this.db.prepare('SELECT name,email FROM accounts WHERE id=?').get(session.accountId);
-    return {account:a,csrfToken:session.csrf,selectedProjectId:session.projectId,projects:this.db.prepare('SELECT id,label,order_id FROM projects WHERE account_id=? ORDER BY rowid').all(session.accountId).map(p=>({id:p.id,label:p.label,orderId:p.order_id,deliveries:this.db.prepare('SELECT d.id,d.manifest_hash,d.created,r.accepted FROM deliveries d LEFT JOIN reviews r ON r.delivery_id=d.id WHERE d.project_id=? ORDER BY d.created DESC').all(p.id).map(d=>({id:d.id,manifestHash:d.manifest_hash,preparedAt:new Date(d.created).toISOString(),reviewedAt:d.accepted?new Date(d.accepted).toISOString():null,reviewMode:'local_test',cloudArchiveActive:false}))})),mode:'local_test'};
+    return {account:a,csrfToken:session.csrf,operatorAccess:new FeedbackManagement(this).projects(session).length>0,selectedProjectId:session.projectId,projects:this.db.prepare('SELECT id,label,order_id FROM projects WHERE account_id=? ORDER BY rowid').all(session.accountId).map(p=>({id:p.id,label:p.label,orderId:p.order_id,deliveries:this.db.prepare('SELECT d.id,d.manifest_hash,d.created,r.accepted FROM deliveries d LEFT JOIN reviews r ON r.delivery_id=d.id WHERE d.project_id=? ORDER BY d.created DESC,d.rowid DESC').all(p.id).map(d=>({id:d.id,manifestHash:d.manifest_hash,preparedAt:new Date(d.created).toISOString(),reviewedAt:d.accepted?new Date(d.accepted).toISOString():null,reviewMode:'local_test',cloudArchiveActive:false}))})),mode:'local_test'};
   }
   close(){if(this.db){this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');this.db.close();this.db=null;}}
 }
