@@ -50,6 +50,13 @@ export class CustomerDelivery {
     const record=await this.workspaces.read(project.id,project.owner_id);
     return {deliveryId:id,manifestHash:delivery.manifest_hash,...deliveryReviewStatus(record,{manifest:m.model,catalogue})};
   }
+  async recordFeedback(session,command){
+    const delivery=this.accounts.delivery(session.accountId,command.deliveryId);
+    if(delivery.manifest_hash!==command.manifestHash)fail('DELIVERY_VERSION_CHANGED');
+    const m=await this.manifest(delivery),project=this.accounts.project(session.accountId,delivery.project_id);
+    if(m.model.projectId!==project.id||m.model.serviceOrderId!==project.order_id)fail('DELIVERY_IDENTITY_MISMATCH');
+    return this.accounts.recordFeedback(session,command);
+  }
   async read(session,id,file){
     const delivery=this.accounts.delivery(session.accountId,id);let relative;
     try{relative=safeRelative(file);}catch{fail('NOT_FOUND',404);}

@@ -133,6 +133,16 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
           if([...url.searchParams.keys()].some(key=>key!=='deliveryId')||url.searchParams.getAll('deliveryId').length!==1)throw new IntakeError('INVALID_REQUEST',400);
           return json(res,200,await customerAccess.deliveries.reviewStatus(customerSession,url.searchParams.get('deliveryId')));
         }
+        if(customerSession&&url.pathname==='/api/customer/delivery-feedback'&&req.method==='GET'){
+          if([...url.searchParams.keys()].some(key=>key!=='deliveryId')||url.searchParams.getAll('deliveryId').length!==1)throw new IntakeError('INVALID_REQUEST',400);
+          return json(res,200,customerAccess.accounts.feedback(customerSession,url.searchParams.get('deliveryId')));
+        }
+        if(customerSession&&url.pathname==='/api/customer/delivery-feedback'&&req.method==='POST'){
+          if(url.search)throw new IntakeError('INVALID_REQUEST',400);
+          const command=await body(req,16_384);keys(command,['deliveryId','manifestHash','requestId','category','message']);
+          const receipt=await customerAccess.deliveries.recordFeedback(customerSession,command);
+          return json(res,receipt.duplicate?200:201,receipt);
+        }
         if(customerSession&&url.pathname==='/api/customer/select'&&req.method==='POST'){
           const command=await body(req,1024);keys(command,['projectId']);
           const selected=customerAccess.accounts.select(customerToken,command.projectId);return json(res,200,customerAccess.accounts.view(selected));

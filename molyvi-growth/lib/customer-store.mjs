@@ -21,6 +21,8 @@ export class CustomerStore {
     this.db=new DatabaseSync(path.join(this.storage,'customers.sqlite'));
     const version=this.db.prepare('PRAGMA user_version').get().user_version;
     if(![0,1,2].includes(version)){this.db.close();this.db=null;fail('CUSTOMER_SCHEMA_UNSUPPORTED',500);}
+    // delivery_feedback is an additive v2-compatible extension: existing tables and
+    // receipts keep their format, so the previous release can still open this DB.
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS accounts(id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,name TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),owner_id TEXT NOT NULL,label TEXT NOT NULL,order_id TEXT NOT NULL);
@@ -33,6 +35,9 @@ export class CustomerStore {
       CREATE TABLE IF NOT EXISTS payment_links(project_id TEXT PRIMARY KEY,account_id TEXT REFERENCES accounts(id),owner_id TEXT NOT NULL,order_id TEXT NOT NULL UNIQUE,body_hash TEXT NOT NULL,email TEXT,status TEXT NOT NULL,label TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS mail_outbox(id TEXT PRIMARY KEY,dedupe_key TEXT NOT NULL UNIQUE,account_id TEXT NOT NULL REFERENCES accounts(id),kind TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_at INTEGER NOT NULL,expires INTEGER,code_hash TEXT,last_error TEXT,receipt TEXT,created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS code_requests(bucket TEXT PRIMARY KEY,started INTEGER NOT NULL,count INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS delivery_feedback(id TEXT PRIMARY KEY,delivery_id TEXT NOT NULL REFERENCES deliveries(id),account_id TEXT NOT NULL REFERENCES accounts(id),manifest_hash TEXT NOT NULL,request_id TEXT NOT NULL,category TEXT NOT NULL,message TEXT NOT NULL,created INTEGER NOT NULL,UNIQUE(account_id,request_id));
+      CREATE INDEX IF NOT EXISTS delivery_feedback_delivery ON delivery_feedback(delivery_id,created);
+      CREATE INDEX IF NOT EXISTS delivery_feedback_account ON delivery_feedback(account_id,created);
       PRAGMA user_version=2;`);
     if(!this.db.prepare('PRAGMA table_info(mail_outbox)').all().some(c=>c.name==='created'))this.db.exec('ALTER TABLE mail_outbox ADD COLUMN created INTEGER NOT NULL DEFAULT 0; UPDATE mail_outbox SET created=next_at;');
     await fs.chmod(path.join(this.storage,'customers.sqlite'),0o600);
@@ -106,6 +111,24 @@ export class CustomerStore {
     const id=crypto.randomUUID();this.db.prepare('INSERT INTO deliveries VALUES(?,?,?,?,?)').run(id,projectId,manifestHash,zipHash,this.now());return this.db.prepare('SELECT * FROM deliveries WHERE id=?').get(id);
   }
   delivery(accountId,id){if(!uuid(id))fail('NOT_FOUND',404);const r=this.db.prepare('SELECT d.* FROM deliveries d JOIN projects p ON p.id=d.project_id WHERE d.id=? AND p.account_id=?').get(id,accountId);if(!r)fail('NOT_FOUND',404);return r;}
+  feedback(session,deliveryId){
+    const delivery=this.delivery(session.accountId,deliveryId);
+    return {deliveryId,manifestHash:delivery.manifest_hash,items:this.db.prepare('SELECT id,category,message,created FROM delivery_feedback WHERE delivery_id=? AND account_id=? ORDER BY created,rowid').all(deliveryId,session.accountId).map(r=>({id:r.id,category:r.category,message:r.message,createdAt:new Date(r.created).toISOString(),status:'received'})),customerAccepted:false,workStarted:false,creditsCharged:false};
+  }
+  recordFeedback(session,{deliveryId,manifestHash,requestId,category,message}){
+    if(!uuid(requestId)||!['appearance','photos','text','seller','orders','policies','other'].includes(category)||typeof message!=='string'||!message.trim()||message.length>2000||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(message))fail('INVALID_FEEDBACK',422);
+    message=message.trim();
+    return this.transaction(()=>{
+      const delivery=this.delivery(session.accountId,deliveryId);if(delivery.manifest_hash!==manifestHash)fail('DELIVERY_VERSION_CHANGED',409);
+      const existing=this.db.prepare('SELECT * FROM delivery_feedback WHERE account_id=? AND request_id=?').get(session.accountId,requestId);
+      if(existing){if(existing.delivery_id!==deliveryId||existing.manifest_hash!==manifestHash||existing.category!==category||existing.message!==message)fail('FEEDBACK_REQUEST_CONFLICT',409);return {duplicate:true,id:existing.id,feedback:this.feedback(session,deliveryId)};}
+      // Abuse/storage bounds, not package allowances. No job or credit operation is performed here.
+      if(this.db.prepare('SELECT count(*) n FROM delivery_feedback WHERE account_id=? AND created>?').get(session.accountId,this.now()-60*60*1000).n>=20)fail('FEEDBACK_RATE_LIMIT',429);
+      if(this.db.prepare('SELECT count(*) n FROM delivery_feedback WHERE delivery_id=?').get(deliveryId).n>=100)fail('FEEDBACK_STORAGE_LIMIT',429);
+      const id=crypto.randomUUID();this.db.prepare('INSERT INTO delivery_feedback VALUES(?,?,?,?,?,?,?,?)').run(id,deliveryId,session.accountId,manifestHash,requestId,category,message,this.now());this.audit('delivery_feedback_recorded',session.accountId,id);
+      return {duplicate:false,id,feedback:this.feedback(session,deliveryId)};
+    });
+  }
   review(session,{deliveryId,manifestHash,acknowledged}){
     if(acknowledged!==true)fail('ACKNOWLEDGEMENT_REQUIRED',422);
     return this.transaction(()=>{
