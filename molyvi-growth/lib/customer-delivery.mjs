@@ -4,6 +4,7 @@ import {constants} from 'node:fs';
 import crypto from 'node:crypto';
 import {IntakeError,prepareStorage} from './intake-store.mjs';
 import {ordinaryFile,safeRelative,sha256} from './service-handoff.mjs';
+import {deliveryReviewStatus} from './delivery-review-status.mjs';
 
 const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.txt':'text/plain; charset=utf-8','.md':'text/plain; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.webp':'image/webp','.pdf':'application/pdf','.zip':'application/zip'};
 const fail=(code,status=409)=>{throw new IntakeError(code,status);};
@@ -42,6 +43,13 @@ export class CustomerDelivery {
   }
   async manifest(delivery){const root=path.join(this.storage,delivery.manifest_hash),raw=await ordinaryFile(root,'delivery-manifest.json');if(sha256(raw)!==delivery.manifest_hash)fail('DELIVERY_FILE_CHANGED');return {root,raw,model:JSON.parse(raw)};}
   async verify(delivery){const m=await this.manifest(delivery);for(const f of m.model.files){const b=await ordinaryFile(m.root,f.file);if(b.length!==f.bytes||sha256(b)!==f.sha256)fail('DELIVERY_FILE_CHANGED');}const zip=await ordinaryFile(m.root,'Molyvi-Service-Delivery.zip');if(sha256(zip)!==delivery.zip_hash)fail('DELIVERY_FILE_CHANGED');return true;}
+  async reviewStatus(session,id){
+    const delivery=this.accounts.delivery(session.accountId,id),project=this.accounts.project(session.accountId,delivery.project_id),m=await this.manifest(delivery);
+    const entry=m.model.files.find(f=>f.file==='catalogue.json');let catalogue=null;
+    if(entry){const b=await ordinaryFile(m.root,'catalogue.json');if(b.length!==entry.bytes||sha256(b)!==entry.sha256)fail('DELIVERY_FILE_CHANGED');catalogue=JSON.parse(b);}
+    const record=await this.workspaces.read(project.id,project.owner_id);
+    return {deliveryId:id,manifestHash:delivery.manifest_hash,...deliveryReviewStatus(record,{manifest:m.model,catalogue})};
+  }
   async read(session,id,file){
     const delivery=this.accounts.delivery(session.accountId,id);let relative;
     try{relative=safeRelative(file);}catch{fail('NOT_FOUND',404);}

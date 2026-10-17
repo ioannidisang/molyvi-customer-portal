@@ -3,6 +3,23 @@ let account=null,busy=false,codeRequests=false,realEmailEnabled=false;
 const $=id=>document.getElementById(id);
 const errors={INVALID_LOGIN:'Το email και ο κωδικός δεν ταιριάζουν ή ο κωδικός έχει ήδη χρησιμοποιηθεί. Χρησιμοποίησε έναν νέο κωδικό.',LOGIN_RATE_LIMIT:'Έγιναν αρκετές προσπάθειες. Περίμενε 15 λεπτά πριν δοκιμάσεις ξανά.',SESSION_REQUIRED:'Συνδέσου ξανά για να συνεχίσεις.',DELIVERY_VERSION_CHANGED:'Υπάρχει διαφορετική έκδοση του φακέλου. Ανανέωσε και έλεγξέ την πριν επιβεβαιώσεις.',DELIVERY_FILE_CHANGED:'Ο φάκελος χρειάζεται έλεγχο πριν συνεχίσεις.',CSRF_REQUIRED:'Ανανέωσε τη σελίδα πριν συνεχίσεις.'};
 function node(tag,text,attrs={}){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);return n;}
+function reviewStatusPanel(data){
+  const box=node('div',undefined,{class:'delivery-status-panel'});
+  box.append(node('h4','Μια καθαρή εικόνα. Πριν το επόμενο βήμα.'),node('p',`Κοινά βήματα: ${data.common.submitted}/${data.common.total} · Προϊόντα που υποβλήθηκαν: ${data.products.submitted}/${data.products.total}`,{class:'muted'}));
+  const photoTitles={matches:'Οι φωτογραφίες συμφωνούν με τις επιλογές σου.',changed:'Οι επιλογές σου έχουν αλλάξει.',not_ready:'Οι φωτογραφίες χρειάζονται ακόμη ένα βήμα.',unavailable:'Δεν υπάρχει ακόμη σύγκριση φωτογραφιών για αυτόν τον φάκελο.'};
+  box.append(node('h4',photoTitles[data.photos.status]??photoTitles.unavailable));
+  if(data.photos.status==='matches')box.append(node('p',`Οι ${data.photos.selectedCount} επιλεγμένες φωτογραφίες είναι ίδιες και στην ίδια σειρά με αυτή την έκδοση. Ο έλεγχος αφορά τις αποθηκευμένες επιλογές τη στιγμή που τον ανοίγεις.`));
+  else if(data.photos.status==='changed')box.append(node('p','Ο φάκελος διατηρεί την έκδοση που παραδόθηκε. Οι νεότερες επιλογές σου χρειάζονται νέα έκδοση φακέλου, πριν από τον τελικό έλεγχο.'));
+  if(data.photos.changedProducts.length){const list=node('ul');for(const item of data.photos.changedProducts)list.append(node('li',`${item.title}${item.positions.length?` · Φωτογραφίες ${item.positions.join(', ')}`:''}`));box.append(list);}
+  box.append(node('p','Η συμφωνία επιλογών δεν αποτελεί έγκριση ποιότητας ή πιστότητας. Έλεγξε τις φωτογραφίες σε σχέση με τα δικά σου προϊόντα.',{class:'muted'}));
+  box.append(node('h4','Τα στοιχεία που απομένουν.'));
+  if(data.content.status==='available'){
+    box.append(node('p',data.content.pendingCount?`${data.content.pendingCount} στοιχεία χρειάζονται συμπλήρωση ή επιβεβαίωση πριν από πραγματική λειτουργία.`:'Δεν εμφανίζονται ελλείψεις στα δηλωμένα στοιχεία. Παραμένει ο τελικός έλεγχος καταλληλότητας των πολιτικών.'));
+    for(const group of data.content.groups){const details=node('details'),summary=node('summary',`${group.title} · ${group.items.length}`),list=node('ul');for(const item of group.items)list.append(node('li',item.label));details.append(summary,list);box.append(details);}
+  }else box.append(node('p','Ο έλεγχος στοιχείων θα εμφανιστεί όταν είναι διαθέσιμα τα προσχέδια του έργου.'));
+  box.append(node('p','Αυτός ο έλεγχος δεν αλλάζει τα αρχεία ή τις επιλογές σου και δεν καταγράφει τελική αποδοχή. Η εγκυρότητα των πολιτικών και η ενεργοποίηση πληρωμών ολοκληρώνονται από τον ιδιοκτήτη. Το κατάστημα παραμένει αδημοσίευτο.',{class:'muted'}));
+  return box;
+}
 async function api(url,payload){const response=await fetch(url,payload?{method:'POST',headers:{'Content-Type':'application/json',...(account?{'X-Molyvi-Csrf':account.csrfToken}:{})},body:JSON.stringify(payload)}:{cache:'no-store'});const data=await response.json();if(!response.ok){const e=new Error(errors[data.error]??'Η ενέργεια δεν ολοκληρώθηκε. Προσπάθησε ξανά.');e.code=data.error;throw e;}return data;}
 function render(){
   $('login-panel').hidden=Boolean(account);$('account-panel').hidden=!account;$('logout').hidden=!account;
@@ -22,6 +39,8 @@ function render(){
       section.append(node('h3','Ο φάκελος του καταστήματός σου.'),node('p','Οι φωτογραφίες, τα κείμενα και οι οδηγίες, συγκεντρωμένα σε μια συγκεκριμένη έκδοση.'));
       const links=node('div',undefined,{class:'actions'});
       for(const [label,file]of [['Δες τον φάκελο','index.html'],['Εγχειρίδιο PDF','Molyvi-Service-Handbook.pdf'],['Λήψη όλων των αρχείων','Molyvi-Service-Delivery.zip']])links.append(node('a',label,{class:'button secondary',href:base+file,...(file.endsWith('.zip')?{download:''}:{target:'_blank',rel:'noopener noreferrer'})}));section.append(links);
+      const inspect=node('button','Έλεγχος πριν την παράδοση',{type:'button',class:'secondary','aria-expanded':'false','aria-controls':`delivery-status-${d.id}`}),status=node('div',undefined,{id:`delivery-status-${d.id}`,hidden:''});
+      inspect.addEventListener('click',()=>{if(!status.hidden){status.hidden=true;inspect.setAttribute('aria-expanded','false');return;}run(async()=>{const result=await api('/api/customer/delivery-status?deliveryId='+encodeURIComponent(d.id));status.replaceChildren(reviewStatusPanel(result));status.hidden=false;inspect.setAttribute('aria-expanded','true');});});section.append(inspect,status);
       if(d.reviewedAt){section.append(node('p',`Ο τεχνικός έλεγχος της δοκιμής καταγράφηκε στις ${new Intl.DateTimeFormat('el-GR',{dateStyle:'medium',timeStyle:'short',timeZone:'Europe/Athens'}).format(new Date(d.reviewedAt))}.`,{class:'muted'}));}
       else {
         const form=node('form'),label=node('label',undefined,{class:'review-label'}),check=node('input',undefined,{type:'checkbox',required:''});

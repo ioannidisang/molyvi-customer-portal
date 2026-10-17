@@ -129,6 +129,10 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
         const customerSession=customerAccess?customerAccess.accounts.authenticate(customerToken):null;
         if(customerSession&&req.method==='POST')customerAccess.accounts.assertCsrf(customerSession,req.headers['x-molyvi-csrf']);
         if(customerSession&&url.pathname==='/api/customer/me'&&req.method==='GET')return json(res,200,customerAccess.accounts.view(customerSession));
+        if(customerSession&&url.pathname==='/api/customer/delivery-status'&&req.method==='GET'){
+          if([...url.searchParams.keys()].some(key=>key!=='deliveryId')||url.searchParams.getAll('deliveryId').length!==1)throw new IntakeError('INVALID_REQUEST',400);
+          return json(res,200,await customerAccess.deliveries.reviewStatus(customerSession,url.searchParams.get('deliveryId')));
+        }
         if(customerSession&&url.pathname==='/api/customer/select'&&req.method==='POST'){
           const command=await body(req,1024);keys(command,['projectId']);
           const selected=customerAccess.accounts.select(customerToken,command.projectId);return json(res,200,customerAccess.accounts.view(selected));
@@ -301,7 +305,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
           return;
         }finally{await file?.handle?.close();if(archive)activeArchives--;}
       }
-      const name=new Map([['/',customerAccess?'customer.html':'index.html'],['/customer/','customer.html'],['/customer.js','customer.js'],['/customer.css','customer.css'],['/workspace/','index.html'],['/workspace.js','workspace.js'],['/products.js','products.js'],['/catalog-editor.js','catalog-editor.js'],['/gallery.js','gallery.js'],['/shipping.js','shipping.js'],['/merchant-payments.js','merchant-payments.js'],['/store-content.js','store-content.js'],['/workspace.css','workspace.css']]).get(url.pathname);
+      const name=new Map([['/',customerAccess?'customer.html':'index.html'],['/customer/','customer.html'],['/customer.js','customer.js'],['/customer.css','customer.css'],['/delivery-status.css','delivery-status.css'],['/workspace/','index.html'],['/workspace.js','workspace.js'],['/products.js','products.js'],['/catalog-editor.js','catalog-editor.js'],['/gallery.js','gallery.js'],['/shipping.js','shipping.js'],['/merchant-payments.js','merchant-payments.js'],['/store-content.js','store-content.js'],['/workspace.css','workspace.css']]).get(url.pathname);
       if(name?.startsWith('customer')&&!customerAccess)throw new IntakeError('NOT_FOUND',404);
       if(!name)throw new IntakeError('NOT_FOUND',404);
       const target=await fs.realpath(path.join(realSite,name));
