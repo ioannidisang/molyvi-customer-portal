@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {IntakeError} from './intake-store.mjs';
 import {MinorAdjustments} from './minor-adjustments.mjs';
+import {AdjustmentExecution} from './adjustment-execution.mjs';
 
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v);
 const fail=(code,status=403)=>{throw new IntakeError(code,status);};
@@ -33,7 +34,7 @@ export class FeedbackManagement {
     const project=this.assertAccess(session,projectId),deliveries=this.db.prepare('SELECT id,manifest_hash,created FROM deliveries WHERE project_id=? ORDER BY created,rowid').all(projectId).map((d,i)=>({id:d.id,manifestHash:d.manifest_hash,version:i+1,preparedAt:new Date(d.created).toISOString()}));
     const total=this.db.prepare('SELECT count(*) n FROM delivery_feedback f JOIN deliveries d ON d.id=f.delivery_id WHERE d.project_id=?').get(projectId).n;
     const adjustments=new MinorAdjustments(this.accounts),items=this.db.prepare('SELECT f.* FROM delivery_feedback f JOIN deliveries d ON d.id=f.delivery_id WHERE d.project_id=? ORDER BY f.created DESC,f.rowid DESC LIMIT 200').all(projectId).map(r=>{const replies=this.history(r.id);return {id:r.id,deliveryId:r.delivery_id,manifestHash:r.manifest_hash,category:r.category,message:r.message,createdAt:new Date(r.created).toISOString(),revision:replies.length,status:replies.at(-1)?.status??'received',disposition:replies.at(-1)?.disposition??null,replies,adjustmentProposals:adjustments.proposals(r.id)};});
-    return {project,deliveries,items,total,truncated:total>items.length,adjustmentAllowance:adjustments.allowance(projectId),workStarted:false,creditsCharged:false,published:false};
+    const executions=new AdjustmentExecution(this.accounts).list(projectId);return {project,deliveries,items,total,truncated:total>items.length,adjustmentAllowance:adjustments.allowance(projectId),adjustmentExecutions:executions,workStarted:executions.some(e=>e.startedAt),creditsCharged:false,published:false};
   }
   binding(session,{projectId,deliveryId,feedbackId,manifestHash}){
     this.assertAccess(session,projectId);if(!uuid(deliveryId)||!uuid(feedbackId))fail('NOT_FOUND',404);

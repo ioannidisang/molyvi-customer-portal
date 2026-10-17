@@ -26,6 +26,7 @@ import {createRequestBoundary} from './lib/hosted-request-boundary.mjs';
 import {RequestSlots} from './lib/request-slots.mjs';
 import {isHostedControlledPro} from './lib/hosted-controlled-pro.mjs';
 import {FeedbackManagement} from './lib/feedback-management.mjs';
+import {DeliveryRevision} from './lib/delivery-revision.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const json=(res,status,body,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(body));};
@@ -147,6 +148,21 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
           if(url.search)throw new IntakeError('INVALID_REQUEST',400);
           const command=await body(req,8192);keys(command,['projectId','deliveryId','feedbackId','manifestHash','requestId','expectedReplyRevision','expectedProposalRevision','scope','singleAdjustmentAcknowledged']);
           const receipt=await customerAccess.deliveries.proposeMinorAdjustment(customerSession,command);return json(res,receipt.duplicate?200:201,receipt);
+        }
+        if(customerSession&&url.pathname==='/api/operator/adjustment-plan'&&req.method==='POST'){
+          if(url.search)throw new IntakeError('INVALID_REQUEST',400);
+          const command=await body(req,12_288);keys(command,['projectId','proposalId','proposalHash','requestId','edit','scopeVerified']);
+          const receipt=await customerAccess.deliveries.planMinorAdjustment(customerSession,command);return json(res,receipt.duplicate?200:201,receipt);
+        }
+        if(customerSession&&url.pathname==='/api/operator/adjustment-execute'&&req.method==='POST'){
+          if(url.search)throw new IntakeError('INVALID_REQUEST',400);
+          const command=await body(req,2048);keys(command,['projectId','executionId','planHash','executionReviewed']);
+          const receipt=await customerAccess.deliveries.executeMinorAdjustment(customerSession,command);return json(res,receipt.duplicate?200:201,receipt);
+        }
+        if(customerSession&&url.pathname==='/api/operator/adjustment-preview'&&req.method==='GET'){
+          const names=['projectId','executionId','planHash','file'];if([...url.searchParams.keys()].some(k=>!names.includes(k))||names.some(k=>url.searchParams.getAll(k).length!==1))throw new IntakeError('INVALID_REQUEST',400);
+          const command=Object.fromEntries(url.searchParams),file=await new DeliveryRevision(customerAccess.deliveries).preview(customerSession,command,command.file);
+          res.writeHead(200,{'Content-Type':file.type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",'Referrer-Policy':'no-referrer'});return res.end(file.bytes);
         }
         if(url.pathname.startsWith('/api/operator/'))throw new IntakeError('NOT_FOUND',404);
         if(customerSession&&url.pathname==='/api/customer/adjustment-approval'&&req.method==='POST'){
