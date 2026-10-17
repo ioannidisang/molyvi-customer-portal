@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {prepareStorage,IntakeError} from './intake-store.mjs';
 import {FeedbackManagement,FEEDBACK_MANAGEMENT_SCHEMA} from './feedback-management.mjs';
+import {MinorAdjustments,MINOR_ADJUSTMENT_SCHEMA} from './minor-adjustments.mjs';
 
 const hash=v=>crypto.createHash('sha256').update(v).digest('hex');
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v);
@@ -42,6 +43,7 @@ export class CustomerStore {
       PRAGMA user_version=2;`);
     if(!this.db.prepare('PRAGMA table_info(mail_outbox)').all().some(c=>c.name==='created'))this.db.exec('ALTER TABLE mail_outbox ADD COLUMN created INTEGER NOT NULL DEFAULT 0; UPDATE mail_outbox SET created=next_at;');
     this.db.exec(FEEDBACK_MANAGEMENT_SCHEMA);
+    this.db.exec(MINOR_ADJUSTMENT_SCHEMA);
     await fs.chmod(path.join(this.storage,'customers.sqlite'),0o600);
     return this;
   }
@@ -115,8 +117,8 @@ export class CustomerStore {
   delivery(accountId,id){if(!uuid(id))fail('NOT_FOUND',404);const r=this.db.prepare('SELECT d.* FROM deliveries d JOIN projects p ON p.id=d.project_id WHERE d.id=? AND p.account_id=?').get(id,accountId);if(!r)fail('NOT_FOUND',404);return r;}
   feedback(session,deliveryId){
     const delivery=this.delivery(session.accountId,deliveryId);
-    const manager=new FeedbackManagement(this);
-    return {deliveryId,manifestHash:delivery.manifest_hash,items:this.db.prepare('SELECT id,category,message,created FROM delivery_feedback WHERE delivery_id=? AND account_id=? ORDER BY created,rowid').all(deliveryId,session.accountId).map(r=>{const replies=manager.history(r.id);return {id:r.id,category:r.category,message:r.message,createdAt:new Date(r.created).toISOString(),status:replies.at(-1)?.status??'received',revision:replies.length,replies};}),customerAccepted:false,workStarted:false,creditsCharged:false};
+    const manager=new FeedbackManagement(this),adjustments=new MinorAdjustments(this);
+    return {deliveryId,manifestHash:delivery.manifest_hash,adjustmentAllowance:adjustments.allowance(delivery.project_id),items:this.db.prepare('SELECT id,category,message,created FROM delivery_feedback WHERE delivery_id=? AND account_id=? ORDER BY created,rowid').all(deliveryId,session.accountId).map(r=>{const replies=manager.history(r.id);return {id:r.id,category:r.category,message:r.message,createdAt:new Date(r.created).toISOString(),status:replies.at(-1)?.status??'received',revision:replies.length,replies,adjustmentProposals:adjustments.proposals(r.id)};}),customerAccepted:false,workStarted:false,creditsCharged:false};
   }
   recordFeedback(session,{deliveryId,manifestHash,requestId,category,message}){
     if(!uuid(requestId)||!['appearance','photos','text','seller','orders','policies','other'].includes(category)||typeof message!=='string'||!message.trim()||message.length>2000||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(message))fail('INVALID_FEEDBACK',422);

@@ -1,0 +1,10 @@
+'use strict';
+const MolyviAdjustments=(()=>{
+  function el(tag,text,attrs={}){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;for(const [k,v]of Object.entries(attrs))n.setAttribute(k,v);return n;}
+  const labels={awaiting_customer:'Αναμένει τη δική σου έγκριση',approved:'Εγκεκριμένη',superseded:'Αντικαταστάθηκε από νεότερη πρόταση',stale:'Χρειάζεται νέα πρόταση από τη Molyvi'};
+  function counter(a){const box=el('div',undefined,{class:'adjustment-allowance'});box.append(el('strong',`Εγκεκριμένες μικρές προσαρμογές: ${a.approved}/${a.limit}`),el('p',`${a.remaining} διαθέσιμες · Ένας κοινός τελικός γύρος για όλο το έργο. Νέα έκδοση φακέλου δεν μηδενίζει τον μετρητή.`,{class:'muted'}));return box;}
+  function history(proposals,{allowance,onApprove}={}){const box=el('div');for(const p of proposals){const card=el('section',undefined,{class:'adjustment-proposal'});card.append(el('h4',`Μικρή προσαρμογή · Πρόταση ${p.revision}`),el('p',p.scope,{class:'adjustment-scope'}),el('p',p.status==='approved'?`${labels.approved} · Θέση ${p.slot}/${allowance.limit}. Η εκτέλεση δεν έχει ξεκινήσει.`:p.status==='awaiting_customer'&&!onApprove?'Αναμένει έγκριση του πελάτη':labels[p.status],{class:'muted'}));
+    if(p.status==='awaiting_customer'&&onApprove){if(allowance.remaining){const form=el('form'),check=el('input',undefined,{type:'checkbox',required:''}),label=el('label',undefined,{class:'adjustment-check'}),result=el('p','',{role:'status','aria-live':'polite'});label.append(check,el('span','Έλεγξα την παραπάνω περιγραφή και εγκρίνω αυτήν ακριβώς την αλλαγή. Δεσμεύεται 1 από τις έως 5 μικρές προσαρμογές του έργου.'));form.append(label,el('button','Εγκρίνω αυτή την προσαρμογή',{type:'submit'}),result);let requestId;form.addEventListener('submit',event=>{event.preventDefault();if(!check.checked||!form.reportValidity())return;requestId??=crypto.randomUUID();onApprove(p,requestId,result);});card.append(form);}else card.append(el('p','Οι 5 μικρές προσαρμογές έχουν ήδη εγκριθεί. Δεν μπορεί να προστεθεί άλλη σε αυτόν τον γύρο.'));}
+    box.append(card);}return box;}
+  return {counter,history};
+})();

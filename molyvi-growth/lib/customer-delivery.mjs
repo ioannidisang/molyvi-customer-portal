@@ -6,6 +6,7 @@ import {IntakeError,prepareStorage} from './intake-store.mjs';
 import {ordinaryFile,safeRelative,sha256} from './service-handoff.mjs';
 import {deliveryReviewStatus} from './delivery-review-status.mjs';
 import {FeedbackManagement} from './feedback-management.mjs';
+import {MinorAdjustments} from './minor-adjustments.mjs';
 
 const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.txt':'text/plain; charset=utf-8','.md':'text/plain; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.webp':'image/webp','.pdf':'application/pdf','.zip':'application/zip'};
 const fail=(code,status=409)=>{throw new IntakeError(code,status);};
@@ -62,6 +63,16 @@ export class CustomerDelivery {
     const manager=new FeedbackManagement(this.accounts),row=manager.binding(session,command),project=manager.assertAccess(session,command.projectId),delivery=this.accounts.db.prepare('SELECT * FROM deliveries WHERE id=?').get(row.delivery_id),m=await this.manifest(delivery);
     if(m.model.projectId!==project.id||m.model.serviceOrderId!==project.orderId)fail('DELIVERY_IDENTITY_MISMATCH');
     return manager.reply(session,command);
+  }
+  async proposeMinorAdjustment(session,command){
+    const adjustments=new MinorAdjustments(this.accounts),row=adjustments.operatorBinding(session,command),delivery=this.accounts.db.prepare('SELECT * FROM deliveries WHERE id=?').get(row.delivery_id),project=new FeedbackManagement(this.accounts).assertAccess(session,command.projectId),m=await this.manifest(delivery);
+    if(m.model.projectId!==project.id||m.model.serviceOrderId!==project.orderId)fail('DELIVERY_IDENTITY_MISMATCH');
+    const receipt=adjustments.propose(session,command);return {...receipt,inbox:new FeedbackManagement(this.accounts).inbox(session,command.projectId)};
+  }
+  async approveMinorAdjustment(session,command){
+    const adjustments=new MinorAdjustments(this.accounts),{delivery}=adjustments.customerBinding(session,command),project=this.accounts.project(session.accountId,delivery.project_id),m=await this.manifest(delivery);
+    if(m.model.projectId!==project.id||m.model.serviceOrderId!==project.order_id)fail('DELIVERY_IDENTITY_MISMATCH');
+    const receipt=adjustments.approve(session,command);return {...receipt,feedback:this.accounts.feedback(session,command.deliveryId)};
   }
   async read(session,id,file){
     const delivery=this.accounts.delivery(session.accountId,id);let relative;
