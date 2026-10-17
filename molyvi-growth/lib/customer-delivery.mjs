@@ -8,6 +8,7 @@ import {deliveryReviewStatus} from './delivery-review-status.mjs';
 import {FeedbackManagement} from './feedback-management.mjs';
 import {MinorAdjustments} from './minor-adjustments.mjs';
 import {DeliveryRevision} from './delivery-revision.mjs';
+import {DeliveryFinalRelease} from './delivery-final-release.mjs';
 
 const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.txt':'text/plain; charset=utf-8','.md':'text/plain; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.webp':'image/webp','.pdf':'application/pdf','.zip':'application/zip'};
 const fail=(code,status=409)=>{throw new IntakeError(code,status);};
@@ -77,6 +78,8 @@ export class CustomerDelivery {
   }
   async planMinorAdjustment(session,command){const receipt=await new DeliveryRevision(this).stage(session,command);return {...receipt,inbox:new FeedbackManagement(this.accounts).inbox(session,command.projectId)};}
   async executeMinorAdjustment(session,command){const receipt=await new DeliveryRevision(this).execute(session,command);return {...receipt,inbox:new FeedbackManagement(this.accounts).inbox(session,command.projectId)};}
+  async reviewAdjustmentRevision(session,command){const receipt=await new DeliveryFinalRelease(this).review(session,command);return {...receipt,inbox:new FeedbackManagement(this.accounts).inbox(session,command.projectId)};}
+  async deliverAdjustmentRevision(session,command){const receipt=await new DeliveryFinalRelease(this).release(session,command);return {...receipt,inbox:new FeedbackManagement(this.accounts).inbox(session,command.projectId)};}
   async read(session,id,file){
     const delivery=this.accounts.delivery(session.accountId,id);let relative;
     try{relative=safeRelative(file);}catch{fail('NOT_FOUND',404);}

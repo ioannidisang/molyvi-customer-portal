@@ -27,6 +27,7 @@ import {RequestSlots} from './lib/request-slots.mjs';
 import {isHostedControlledPro} from './lib/hosted-controlled-pro.mjs';
 import {FeedbackManagement} from './lib/feedback-management.mjs';
 import {DeliveryRevision} from './lib/delivery-revision.mjs';
+import {DeliveryFinalRelease} from './lib/delivery-final-release.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const json=(res,status,body,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(body));};
@@ -163,6 +164,16 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
           const names=['projectId','executionId','planHash','file'];if([...url.searchParams.keys()].some(k=>!names.includes(k))||names.some(k=>url.searchParams.getAll(k).length!==1))throw new IntakeError('INVALID_REQUEST',400);
           const command=Object.fromEntries(url.searchParams),file=await new DeliveryRevision(customerAccess.deliveries).preview(customerSession,command,command.file);
           res.writeHead(200,{'Content-Type':file.type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",'Referrer-Policy':'no-referrer'});return res.end(file.bytes);
+        }
+        if(customerSession&&url.pathname==='/api/operator/adjustment-final-check'&&req.method==='POST'){
+          if(url.search)throw new IntakeError('INVALID_REQUEST',400);
+          const command=await body(req,4096);keys(command,['projectId','executionId','planHash','resultHash','requestId','checks']);
+          const receipt=await customerAccess.deliveries.reviewAdjustmentRevision(customerSession,command);return json(res,receipt.duplicate?200:201,receipt);
+        }
+        if(customerSession&&url.pathname==='/api/operator/adjustment-deliver'&&req.method==='POST'){
+          if(url.search)throw new IntakeError('INVALID_REQUEST',400);
+          const command=await body(req,2048);keys(command,['projectId','reviewId','reviewHash','deliverAcknowledged']);
+          const receipt=await customerAccess.deliveries.deliverAdjustmentRevision(customerSession,command);return json(res,receipt.duplicate?200:201,receipt);
         }
         if(url.pathname.startsWith('/api/operator/'))throw new IntakeError('NOT_FOUND',404);
         if(customerSession&&url.pathname==='/api/customer/adjustment-approval'&&req.method==='POST'){
@@ -341,6 +352,10 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
         throw new IntakeError('NOT_FOUND',404);
       }
       if(!['GET','HEAD'].includes(req.method))throw new IntakeError('METHOD_NOT_ALLOWED',405);
+      if(customerAccess&&url.pathname.startsWith('/operator-revision-files/')){
+        const token=String(req.headers.cookie??'').split(';').map(p=>p.trim()).find(p=>p.startsWith(boundary.cookieName+'='))?.slice(boundary.cookieName.length+1),session=customerAccess.accounts.authenticate(token),match=url.pathname.match(/^\/operator-revision-files\/([a-f0-9-]+)\/(.+)$/);
+        if(!match||url.search)throw new IntakeError('NOT_FOUND',404);const archive=match[2].endsWith('.zip');if(archive&&activeArchives>=2)throw new IntakeError('DOWNLOAD_BUSY',429);if(archive)activeArchives++;let file;try{file=await new DeliveryFinalRelease(customerAccess.deliveries).openPreview(session,match[1],match[2]);res.writeHead(200,{'Content-Type':file.type,'Content-Length':file.size,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; img-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",...(archive?{'Content-Disposition':`attachment; filename="${file.name}"`}:{})});if(req.method==='HEAD'||file.size===0)res.end();else await pipeline(file.handle.createReadStream({start:0,autoClose:false,highWaterMark:65536}),res);return;}finally{await file?.handle?.close();if(archive)activeArchives--;}
+      }
       if(customerAccess&&url.pathname.startsWith('/customer-files/')){
         const token=String(req.headers.cookie??'').split(';').map(p=>p.trim()).find(p=>p.startsWith(boundary.cookieName+'='))?.slice(boundary.cookieName.length+1);
         const session=customerAccess.accounts.authenticate(token),match=url.pathname.match(/^\/customer-files\/([a-f0-9-]+)\/(.+)$/);

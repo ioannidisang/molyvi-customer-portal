@@ -61,6 +61,7 @@ function render(){
     for(const [deliveryIndex,d] of p.deliveries.entries()){
       const section=node('section',undefined,{class:'delivery'}),base=`/customer-files/${d.id}/`;
       section.append(node('h3','Ο φάκελος του καταστήματός σου.'),node('p',`Έκδοση ${p.deliveries.length-deliveryIndex} · ${dateLabel(d.preparedAt)}`,{class:'muted'}),node('p','Οι φωτογραφίες, τα κείμενα και οι οδηγίες, συγκεντρωμένα σε μια συγκεκριμένη έκδοση.'));
+      if(d.revisionDelivery)section.append(node('p','Νέα ιδιωτική έκδοση διορθωμένων αρχείων. Η εφαρμογή των αλλαγών στο Shopify εκκρεμεί. Δες το σημείωμα έκδοσης μέσα στον φάκελο.',{class:'delivery-revision-notice'}));
       const links=node('div',undefined,{class:'actions'});
       for(const [label,file]of [['Δες τον φάκελο','index.html'],['Εγχειρίδιο PDF','Molyvi-Service-Handbook.pdf'],['Λήψη όλων των αρχείων','Molyvi-Service-Delivery.zip']])links.append(node('a',label,{class:'button secondary',href:base+file,...(file.endsWith('.zip')?{download:''}:{target:'_blank',rel:'noopener noreferrer'})}));section.append(links);
       const inspect=node('button','Έλεγχος πριν την παράδοση',{type:'button',class:'secondary','aria-expanded':'false','aria-controls':`delivery-status-${d.id}`}),status=node('div',undefined,{id:`delivery-status-${d.id}`,hidden:''});

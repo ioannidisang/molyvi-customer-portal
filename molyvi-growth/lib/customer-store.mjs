@@ -6,6 +6,7 @@ import {prepareStorage,IntakeError} from './intake-store.mjs';
 import {FeedbackManagement,FEEDBACK_MANAGEMENT_SCHEMA} from './feedback-management.mjs';
 import {MinorAdjustments,MINOR_ADJUSTMENT_SCHEMA} from './minor-adjustments.mjs';
 import {ADJUSTMENT_EXECUTION_SCHEMA} from './adjustment-execution.mjs';
+import {FINAL_RELEASE_SCHEMA} from './delivery-final-release.mjs';
 
 const hash=v=>crypto.createHash('sha256').update(v).digest('hex');
 const uuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(v);
@@ -46,6 +47,7 @@ export class CustomerStore {
     this.db.exec(FEEDBACK_MANAGEMENT_SCHEMA);
     this.db.exec(MINOR_ADJUSTMENT_SCHEMA);
     this.db.exec(ADJUSTMENT_EXECUTION_SCHEMA);
+    this.db.exec(FINAL_RELEASE_SCHEMA);
     await fs.chmod(path.join(this.storage,'customers.sqlite'),0o600);
     return this;
   }
@@ -147,7 +149,7 @@ export class CustomerStore {
   }
   view(session){
     const a=this.db.prepare('SELECT name,email FROM accounts WHERE id=?').get(session.accountId);
-    return {account:a,csrfToken:session.csrf,operatorAccess:new FeedbackManagement(this).projects(session).length>0,selectedProjectId:session.projectId,projects:this.db.prepare('SELECT id,label,order_id FROM projects WHERE account_id=? ORDER BY rowid').all(session.accountId).map(p=>({id:p.id,label:p.label,orderId:p.order_id,deliveries:this.db.prepare('SELECT d.id,d.manifest_hash,d.created,r.accepted FROM deliveries d LEFT JOIN reviews r ON r.delivery_id=d.id WHERE d.project_id=? ORDER BY d.created DESC,d.rowid DESC').all(p.id).map(d=>({id:d.id,manifestHash:d.manifest_hash,preparedAt:new Date(d.created).toISOString(),reviewedAt:d.accepted?new Date(d.accepted).toISOString():null,reviewMode:'local_test',cloudArchiveActive:false}))})),mode:'local_test'};
+    return {account:a,csrfToken:session.csrf,operatorAccess:new FeedbackManagement(this).projects(session).length>0,selectedProjectId:session.projectId,projects:this.db.prepare('SELECT id,label,order_id FROM projects WHERE account_id=? ORDER BY rowid').all(session.accountId).map(p=>({id:p.id,label:p.label,orderId:p.order_id,deliveries:this.db.prepare("SELECT d.id,d.manifest_hash,d.created,r.accepted,EXISTS(SELECT 1 FROM adjustment_final_reviews f WHERE f.delivery_id=d.id AND f.state='delivered') AS revision_delivery FROM deliveries d LEFT JOIN reviews r ON r.delivery_id=d.id WHERE d.project_id=? ORDER BY d.created DESC,d.rowid DESC").all(p.id).map(d=>({id:d.id,manifestHash:d.manifest_hash,preparedAt:new Date(d.created).toISOString(),reviewedAt:d.accepted?new Date(d.accepted).toISOString():null,revisionDelivery:Boolean(d.revision_delivery),reviewMode:'local_test',cloudArchiveActive:false}))})),mode:'local_test'};
   }
   close(){if(this.db){this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');this.db.close();this.db=null;}}
 }
