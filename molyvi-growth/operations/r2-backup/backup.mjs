@@ -12,7 +12,9 @@ const MAGIC=Buffer.from('MOLYVI-BACKUP-1\n');
 const PACK=Buffer.from('MOLYVI-PACK-1\n');
 const MAX_MANIFEST=16*1024*1024,MAX_BYTES=5_000_000_000,MAX_FILES=100_000;
 const DATABASE='accounts/customers.sqlite';
-const ROOT_NAMES=new Set(['accounts','deliveries','gmail-journal','hosted-scope.json','mail','workspaces']);
+// Exact service-owned roots, including the durable journals from controlled
+// production. Never silently skip unfamiliar roots: those require review.
+const ROOT_NAMES=new Set(['accounts','controlled-operations','controlled-photos','controlled-pro','deliveries','delivery-imports','gmail-journal','hosted-scope.json','mail','regeneration-import-1005-r1','workspaces']);
 const assert=(v,code)=>{if(!v)throw Error(code);};
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 export function safeName(value){
