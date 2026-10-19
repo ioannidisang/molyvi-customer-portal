@@ -36,7 +36,8 @@ export async function createHostedCustomerServer({publicOrigin,healthHosts=[],st
     // Trusted operator configuration only. No HTTP route can enqueue a job,
     // provide callbacks or broaden the fixed store/attempt binding.
     themeRechecks=themeRecheckConfig?createHostedThemeRechecks(themeRecheckConfig):null;
-    server=await createWorkspaceApp({storage:workspaces.storage,customerAccess:{accounts,notifications,deliveries,workspaces},hostedTestPayments:testPayments,hostedControlledPro:controlledPro,deployment:{publicOrigin,healthHosts}});
+    server=await createWorkspaceApp({storage:workspaces.storage,customerAccess:{accounts,notifications,deliveries,workspaces},hostedTestPayments:testPayments,hostedControlledPro:controlledPro,
+      basicPreparationConfig:{storage:path.join(storage,'controlled-operations','basic-preparation')},deployment:{publicOrigin,healthHosts}});
     let interval,stopping=false,active,stopPromise,backupPaused=false;
     const tick=()=>{if(!stopping&&!backupPaused&&!active)active=notifications.tick().catch(()=>{}).finally(()=>{active=null;});};
     server.on('listening',()=>{if(transport){interval=setInterval(tick,1000);tick();}themeRechecks?.start();basicInstaller?.start();});

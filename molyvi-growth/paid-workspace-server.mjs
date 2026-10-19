@@ -28,6 +28,7 @@ import {isHostedControlledPro} from './lib/hosted-controlled-pro.mjs';
 import {FeedbackManagement} from './lib/feedback-management.mjs';
 import {DeliveryRevision} from './lib/delivery-revision.mjs';
 import {DeliveryFinalRelease} from './lib/delivery-final-release.mjs';
+import {createBasicPreparationService} from './lib/basic-preparation.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const json=(res,status,body,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(body));};
@@ -39,7 +40,7 @@ async function body(req,limit=32_768) {
 }
 function keys(value,allowed) {if(!value || typeof value!=='object' || Array.isArray(value) || Object.keys(value).some(key=>!allowed.includes(key)))throw new IntakeError('INVALID_REQUEST',400);}
 
-export async function createWorkspaceApp({site=path.join(root,'public/workspace'),storage=path.join(PRIVATE_ROOT,'molyvi-task-preview'),workerDelayMs=250,photoReviewer,reviewQueueOptions={},productProvider,productionQueueOptions={},serviceProvider,serviceProductionOptions={},servicePayments,hostedTestPayments,hostedControlledPro,allowDemoOrders=true,customerAccess,deployment}={}) {
+export async function createWorkspaceApp({site=path.join(root,'public/workspace'),storage=path.join(PRIVATE_ROOT,'molyvi-task-preview'),workerDelayMs=250,photoReviewer,reviewQueueOptions={},productProvider,productionQueueOptions={},serviceProvider,serviceProductionOptions={},servicePayments,hostedTestPayments,hostedControlledPro,basicPreparationConfig,allowDemoOrders=true,customerAccess,deployment}={}) {
   const boundary=createRequestBoundary(deployment);
   if(boundary.hosted&&(!customerAccess||photoReviewer||productProvider||serviceProvider||servicePayments))throw new IntakeError('HOSTED_STAGING_CUSTOMER_MODE_REQUIRED',500);
   if(customerAccess){if(servicePayments)throw new IntakeError('CUSTOMER_PAYMENT_MODE_CONFLICT',500);allowDemoOrders=false;}
@@ -51,6 +52,10 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   const reverse=path.relative(store.storage,realSite);
   if(!overlap || (!overlap.startsWith('..')&&!path.isAbsolute(overlap)) || !reverse || (!reverse.startsWith('..')&&!path.isAbsolute(reverse)))throw new IntakeError('PRIVATE_STORAGE_OVERLAPS_SITE',500);
   const sessions=new Map(),pumps=new Map();
+  // A customer confirms the current roster; this creates metadata only. Store
+  // credentials, installation authority and package execution are never HTTP inputs.
+  if(basicPreparationConfig)keys(basicPreparationConfig,['storage']);
+  const basicPreparation=basicPreparationConfig?await createBasicPreparationService({store,storage:basicPreparationConfig.storage,targetStore:'molyvi-still-dev.myshopify.com',buildEnabled:false}):null;
   const paymentBridge=servicePayments?createServicePaymentBridge({...servicePayments,store}):null;
   const paymentReceiver=hostedTestPayments??paymentBridge;
   const sessionCookie=(session)=>{const token=crypto.randomBytes(32).toString('hex');sessions.set(token,session);return `molyvi_demo=${token}; HttpOnly; SameSite=Strict; Path=/`;};
@@ -118,7 +123,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
       if(req.headers.origin && req.headers.origin!==origin || req.headers['sec-fetch-site']==='cross-site'&&!publicEntryNavigation)throw new IntakeError('ORIGIN_NOT_ALLOWED',403);
       if(url.pathname.startsWith('/api/')) {
         if(req.method==='POST' && req.headers.origin!==origin)throw new IntakeError('ORIGIN_REQUIRED',403);
-        if(url.pathname==='/api/service-config'&&req.method==='GET')return json(res,200,{allowDemoOrders,servicePayments:paymentBridge?.status()??null,customerAccess:Boolean(customerAccess),customerCodeRequests:Boolean(customerAccess?.notifications),deploymentMode:boundary.hosted?'hosted_staging':'local_test',realEmailEnabled:Boolean(customerAccess?.notifications?.transport?.enabled)});
+        if(url.pathname==='/api/service-config'&&req.method==='GET')return json(res,200,{allowDemoOrders,servicePayments:paymentBridge?.status()??null,customerAccess:Boolean(customerAccess),customerCodeRequests:Boolean(customerAccess?.notifications),basicPreparationEnabled:Boolean(basicPreparation),deploymentMode:boundary.hosted?'hosted_staging':'local_test',realEmailEnabled:Boolean(customerAccess?.notifications?.transport?.enabled)});
         if(customerAccess?.notifications&&url.pathname==='/api/customer/request-code'&&req.method==='POST'){
           const command=await body(req,1024);keys(command,['address']);
           return json(res,202,customerAccess.notifications.requestCode({...command,client}));
@@ -235,6 +240,17 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
         const session=customerSession??sessions.get(cookie);
         if(!session)throw new IntakeError('SESSION_REQUIRED',401);
         if(!session.projectId)throw new IntakeError('PROJECT_REQUIRED',409);
+        if(url.pathname==='/api/basic-preparation'&&req.method==='GET'){
+          if(url.search)throw new IntakeError('INVALID_REQUEST',400);
+          if(!basicPreparation)throw new IntakeError('BASIC_PREPARATION_UNAVAILABLE',503);
+          return json(res,200,await basicPreparation.status(session));
+        }
+        if(url.pathname==='/api/basic-preparation-request'&&req.method==='POST'){
+          if(url.search)throw new IntakeError('INVALID_REQUEST',400);
+          if(!basicPreparation)throw new IntakeError('BASIC_PREPARATION_UNAVAILABLE',503);
+          const command=await body(req,1024);keys(command,['expectedSourceHash','acknowledged']);
+          return json(res,200,await basicPreparation.request(session,command));
+        }
         if(url.pathname==='/api/service-checkout'&&req.method==='POST'){
           if(!paymentBridge)throw new IntakeError('PAYMENT_ADAPTER_UNAVAILABLE',503);
           keys(await body(req),[]);
@@ -372,7 +388,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
           return;
         }finally{await file?.handle?.close();if(archive)activeArchives--;}
       }
-      const name=new Map([['/',customerAccess?'customer.html':'index.html'],['/customer/','customer.html'],['/customer.js','customer.js'],['/customer.css','customer.css'],['/delivery-status.css','delivery-status.css'],['/operator/','operator.html'],['/operator.js','operator.js'],['/operator.css','operator.css'],['/adjustments.js','adjustments.js'],['/adjustments.css','adjustments.css'],['/workspace/','index.html'],['/workspace.js','workspace.js'],['/products.js','products.js'],['/catalog-editor.js','catalog-editor.js'],['/gallery.js','gallery.js'],['/shipping.js','shipping.js'],['/merchant-payments.js','merchant-payments.js'],['/store-content.js','store-content.js'],['/workspace.css','workspace.css']]).get(url.pathname);
+      const name=new Map([['/',customerAccess?'customer.html':'index.html'],['/customer/','customer.html'],['/customer.js','customer.js'],['/customer.css','customer.css'],['/delivery-status.css','delivery-status.css'],['/operator/','operator.html'],['/operator.js','operator.js'],['/operator.css','operator.css'],['/adjustments.js','adjustments.js'],['/adjustments.css','adjustments.css'],['/workspace/','index.html'],['/workspace.js','workspace.js'],['/basic-preparation.js','basic-preparation.js'],['/products.js','products.js'],['/catalog-editor.js','catalog-editor.js'],['/gallery.js','gallery.js'],['/shipping.js','shipping.js'],['/merchant-payments.js','merchant-payments.js'],['/store-content.js','store-content.js'],['/workspace.css','workspace.css']]).get(url.pathname);
       if((name?.startsWith('customer')||name?.startsWith('operator'))&&!customerAccess)throw new IntakeError('NOT_FOUND',404);
       if(!name)throw new IntakeError('NOT_FOUND',404);
       const target=await fs.realpath(path.join(realSite,name));
