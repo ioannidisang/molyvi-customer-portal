@@ -23,6 +23,9 @@ export const BASIC_THEME_PROGRESS_HOSTED_ROOT=path.join(WORKSPACE_ROOT,'briefs',
 export const BASIC_THEME_PROGRESS_INSTALLER_HOSTED_ROOT=path.join(WORKSPACE_ROOT,'briefs','molyvi-hosted-staging','controlled-operations','basic-installer','runtime','theme-progress');
 const INSTALLER_HOSTED_ROOT=path.dirname(path.dirname(BASIC_THEME_PROGRESS_INSTALLER_HOSTED_ROOT));
 const INSTALLER_HOSTED_PROFILE='hosted_basic_v1';
+export const BASIC_THEME_PROGRESS_PREPARED_HOSTED_ROOT=path.join(WORKSPACE_ROOT,'briefs','molyvi-hosted-staging','controlled-operations','basic-prepared-installer','runtime','theme-progress');
+const PREPARED_HOSTED_ROOT=path.dirname(path.dirname(BASIC_THEME_PROGRESS_PREPARED_HOSTED_ROOT));
+const PREPARED_HOSTED_PROFILE='hosted_prepared_basic_v1';
 export const BASIC_THEME_PROGRESS_LIMITS=Object.freeze({graphQLRequests:160,externalRequests:256,stagedUploads:1,themeCreateAttempts:1,readChecks:12,elapsedMs:15*60*1000});
 const BINDING_KEYS=['intentHash','targetStore','projectId','ownerHash','planHash','themeZipSha256','packageBytesHash','shopId','appId','installId','liveThemeId'];
 
@@ -147,8 +150,8 @@ async function replaceHead(directory){
  */
 export function createBasicThemeProgress({binding,attemptId,dependenciesHash,journalDirectory,registryKey,runtimeProfile,rootDirectory=BASIC_THEME_PROGRESS_ROOT,clock=Date.now}={}){
   const expected=normalize({binding,attemptId,dependenciesHash,journalDirectory,registryKey});
-  if(runtimeProfile!==undefined&&runtimeProfile!==INSTALLER_HOSTED_PROFILE)fail('RUNTIME_PROFILE_INVALID');
-  const allowedRoots=runtimeProfile===INSTALLER_HOSTED_PROFILE?[BASIC_THEME_PROGRESS_INSTALLER_HOSTED_ROOT]:[BASIC_THEME_PROGRESS_ROOT,BASIC_THEME_PROGRESS_HOSTED_ROOT];
+  if(runtimeProfile!==undefined&&![INSTALLER_HOSTED_PROFILE,PREPARED_HOSTED_PROFILE].includes(runtimeProfile))fail('RUNTIME_PROFILE_INVALID');
+  const allowedRoots=runtimeProfile===INSTALLER_HOSTED_PROFILE?[BASIC_THEME_PROGRESS_INSTALLER_HOSTED_ROOT]:runtimeProfile===PREPARED_HOSTED_PROFILE?[BASIC_THEME_PROGRESS_PREPARED_HOSTED_ROOT]:[BASIC_THEME_PROGRESS_ROOT,BASIC_THEME_PROGRESS_HOSTED_ROOT];
   if(typeof rootDirectory!=='string'||!allowedRoots.includes(path.resolve(rootDirectory)))fail('ROOT_DIRECTORY_NOT_ALLOWED');
   const progressRoot=path.resolve(rootDirectory);
   // Keep historical default records byte-compatible; hosted records also bind
@@ -157,7 +160,10 @@ export function createBasicThemeProgress({binding,attemptId,dependenciesHash,jou
   if(runtimeProfile===INSTALLER_HOSTED_PROFILE){
     if(!['journal','continuation-journal'].some(name=>expected.journalDirectory===path.join(INSTALLER_HOSTED_ROOT,'jobs',expected.binding.projectId,name)))fail('JOURNAL_DIRECTORY_REQUIRED');
     expected.runtimeProfile=runtimeProfile;expected.progressRoot=progressRoot;
-  }else if(expected.journalDirectory===INSTALLER_HOSTED_ROOT||inside(INSTALLER_HOSTED_ROOT,expected.journalDirectory))fail('RUNTIME_PROFILE_REQUIRED');
+  }else if(runtimeProfile===PREPARED_HOSTED_PROFILE){
+    if(expected.journalDirectory!==path.join(PREPARED_HOSTED_ROOT,'jobs',expected.binding.projectId,'journal'))fail('JOURNAL_DIRECTORY_REQUIRED');
+    expected.runtimeProfile=runtimeProfile;expected.progressRoot=progressRoot;
+  }else if([INSTALLER_HOSTED_ROOT,PREPARED_HOSTED_ROOT].some(root=>expected.journalDirectory===root||inside(root,expected.journalDirectory)))fail('RUNTIME_PROFILE_REQUIRED');
   if(typeof clock!=='function')fail('CLOCK_REQUIRED');
   const directory=path.join(progressRoot,expected.binding.intentHash);
   const now=()=>{const value=clock();if(!Number.isSafeInteger(value)||value<0||value>8_000_000_000_000_000)fail('CLOCK_INVALID');return value;};

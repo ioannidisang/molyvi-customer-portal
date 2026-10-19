@@ -1,0 +1,15 @@
+{
+  "project": "Shopify/dawn",
+  "commit": "258f00f64365e2018ca4c62778a6bf55a5d3cd18",
+  "source": "https://github.com/Shopify/dawn/tree/258f00f64365e2018ca4c62778a6bf55a5d3cd18",
+  "retrievedAt": "2026-10-01T09:30:48.768Z",
+  "license": "LicenseRef-Shopify-Dawn",
+  "licenseFile": "theme/LICENSE.md",
+  "licenseSha256": "189bbb2c31786bdbaa2c6b02a4cb8f8308e1303b176e0955658a26bc90154034",
+  "licenseSource": "https://github.com/Shopify/dawn/blob/258f00f64365e2018ca4c62778a6bf55a5d3cd18/LICENSE.md",
+  "licenseLabelCorrection": {
+    "checkedOn": "2026-10-01",
+    "previousLabel": "MIT",
+    "note": "The pinned license includes Shopify-specific restrictions. Its original text is preserved unchanged; the former plain-MIT label was inaccurate."
+  }
+}

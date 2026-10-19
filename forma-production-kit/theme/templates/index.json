@@ -1,0 +1,58 @@
+{
+  "sections": {
+    "forma_hero": {
+      "type": "forma-editorial-hero",
+      "settings": {
+        "eyebrow": "STILL / ΚΑΘΗΜΕΡΙΝΑ ΑΝΤΙΚΕΙΜΕΝΑ",
+        "heading": "Λίγα πράγματα. Περισσότερος χώρος.",
+        "text": "<p>Απλές γραμμές, ήρεμες υφές και αντικείμενα που βρίσκουν τη θέση τους στην καθημερινότητα.</p>",
+        "button_label": "Η συλλογή",
+        "link": "shopify://collections/all",
+        "image_alt": "Γλυπτικό λευκό κεραμικό βάζο με λινό πάνω σε πέτρα",
+        "caption": "Μια οπτική κατεύθυνση της Molyvi",
+        "color_scheme": "scheme-2"
+      }
+    },
+    "featured_collection": {
+      "type": "featured-collection",
+      "settings": {
+        "title": "Η μικρή συλλογή μας",
+        "heading_size": "h2",
+        "description": "",
+        "show_description": false,
+        "description_style": "body",
+        "collection": "all",
+        "products_to_show": 8,
+        "columns_desktop": 3,
+        "color_scheme": "scheme-1",
+        "full_width": false,
+        "show_view_all": true,
+        "view_all_style": "solid",
+        "enable_desktop_slider": false,
+        "swipe_on_mobile": false,
+        "image_ratio": "portrait",
+        "image_shape": "default",
+        "show_secondary_image": true,
+        "show_vendor": false,
+        "show_rating": false,
+        "quick_add": "standard",
+        "columns_mobile": "2",
+        "padding_top": 72,
+        "padding_bottom": 72
+      }
+    },
+    "forma_note": {
+      "type": "forma-editorial-note",
+      "settings": {
+        "label": "Η ΦΙΛΟΣΟΦΙΑ",
+        "heading": "Αφήνουμε χώρο για όσα έχουν σημασία.",
+        "text": "<p>Το STILL είναι ένα πιλοτικό κατάστημα για να δοκιμάσουμε στην πράξη τη διαδικασία της Molyvi: από ένα οργανωμένο brief σε μια προσεγμένη εμπειρία αγορών.</p><p>Τα προϊόντα και οι τιμές είναι ενδεικτικά. Δεν πρόκειται για πραγματικές εμπορικές προσφορές.</p>"
+      }
+    }
+  },
+  "order": [
+    "forma_hero",
+    "featured_collection",
+    "forma_note"
+  ]
+}

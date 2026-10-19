@@ -29,6 +29,7 @@ import {FeedbackManagement} from './lib/feedback-management.mjs';
 import {DeliveryRevision} from './lib/delivery-revision.mjs';
 import {DeliveryFinalRelease} from './lib/delivery-final-release.mjs';
 import {createBasicPreparationService} from './lib/basic-preparation.mjs';
+import {isHostedBasicPipeline} from './lib/hosted-basic-pipeline.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const json=(res,status,body,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(body));};
@@ -40,7 +41,7 @@ async function body(req,limit=32_768) {
 }
 function keys(value,allowed) {if(!value || typeof value!=='object' || Array.isArray(value) || Object.keys(value).some(key=>!allowed.includes(key)))throw new IntakeError('INVALID_REQUEST',400);}
 
-export async function createWorkspaceApp({site=path.join(root,'public/workspace'),storage=path.join(PRIVATE_ROOT,'molyvi-task-preview'),workerDelayMs=250,photoReviewer,reviewQueueOptions={},productProvider,productionQueueOptions={},serviceProvider,serviceProductionOptions={},servicePayments,hostedTestPayments,hostedControlledPro,basicPreparationConfig,allowDemoOrders=true,customerAccess,deployment}={}) {
+export async function createWorkspaceApp({site=path.join(root,'public/workspace'),storage=path.join(PRIVATE_ROOT,'molyvi-task-preview'),workerDelayMs=250,photoReviewer,reviewQueueOptions={},productProvider,productionQueueOptions={},serviceProvider,serviceProductionOptions={},servicePayments,hostedTestPayments,hostedControlledPro,basicPreparationConfig,basicPreparationRuntime,allowDemoOrders=true,customerAccess,deployment}={}) {
   const boundary=createRequestBoundary(deployment);
   if(boundary.hosted&&(!customerAccess||photoReviewer||productProvider||serviceProvider||servicePayments))throw new IntakeError('HOSTED_STAGING_CUSTOMER_MODE_REQUIRED',500);
   if(customerAccess){if(servicePayments)throw new IntakeError('CUSTOMER_PAYMENT_MODE_CONFLICT',500);allowDemoOrders=false;}
@@ -55,7 +56,8 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   // A customer confirms the current roster; this creates metadata only. Store
   // credentials, installation authority and package execution are never HTTP inputs.
   if(basicPreparationConfig)keys(basicPreparationConfig,['storage']);
-  const basicPreparation=basicPreparationConfig?await createBasicPreparationService({store,storage:basicPreparationConfig.storage,targetStore:'molyvi-still-dev.myshopify.com',buildEnabled:false}):null;
+  if(basicPreparationRuntime&&(!boundary.hosted||!customerAccess||basicPreparationConfig||!isHostedBasicPipeline(basicPreparationRuntime)))throw new IntakeError('BASIC_PREPARATION_RUNTIME_INVALID',500);
+  const basicPreparation=basicPreparationRuntime?.service??(basicPreparationConfig?await createBasicPreparationService({store,storage:basicPreparationConfig.storage,targetStore:'molyvi-still-dev.myshopify.com',buildEnabled:false}):null);
   const paymentBridge=servicePayments?createServicePaymentBridge({...servicePayments,store}):null;
   const paymentReceiver=hostedTestPayments??paymentBridge;
   const sessionCookie=(session)=>{const token=crypto.randomBytes(32).toString('hex');sessions.set(token,session);return `molyvi_demo=${token}; HttpOnly; SameSite=Strict; Path=/`;};
@@ -77,15 +79,15 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     });
     return visible;
   };
-  let closing=false,activeArchives=0,backupPaused=false;
+  let closing=false,activeArchives=0,backupPaused=false,preparationPaused=false;
   const requestSlots=new RequestSlots();
   const signalPhotoQueue=()=>{if(!closing)void photoQueue.tick().catch(()=>{/* Persisted queue state retains evidence and bounded recovery. */});};
   const signalProductQueue=()=>{if(!closing)void productQueue.tick().catch(()=>{/* Persisted attempts prevent blind retries. */});};
   const pump=session=>{
-    if(closing || pumps.has(session.projectId))return;
+    if(closing || preparationPaused || backupPaused || pumps.has(session.projectId))return;
     if(serviceProvider||hostedControlledPro)void serviceQueue.tick();
     const running=(async()=>{
-      while(!closing) {
+      while(!closing&&!preparationPaused&&!backupPaused) {
         const {result:job}=await store.transact(session.projectId,session.ownerId,record=>record.order.paymentMode==='local_simulation'?claimJob(record):null);
         if(!job)return;
         await new Promise(resolve=>setTimeout(resolve,workerDelayMs));
@@ -97,6 +99,10 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     pumps.set(session.projectId,running);
   };
   const server=http.createServer(async(req,res)=>{
+    if(preparationPaused){
+      let pathname;try{pathname=new URL(req.url,'http://molyvi.invalid').pathname;}catch{return json(res,400,{error:'INVALID_REQUEST'});}
+      if(!['GET','HEAD'].includes(req.method)||pathname.startsWith('/customer-files/')||pathname.startsWith('/operator-revision-files/')||pathname.startsWith('/api/operator/adjustment-preview'))return json(res,503,{error:'PREPARATION_IN_PROGRESS'},{'Retry-After':'5'});
+    }
     if(backupPaused&&req.url!=='/healthz')return json(res,503,{error:'BACKUP_SNAPSHOT_IN_PROGRESS'},{'Retry-After':'15'});
     if(boundary.hosted){
       const controller=new AbortController(),abort=()=>controller.abort();res.once('close',abort);
@@ -243,13 +249,13 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
         if(url.pathname==='/api/basic-preparation'&&req.method==='GET'){
           if(url.search)throw new IntakeError('INVALID_REQUEST',400);
           if(!basicPreparation)throw new IntakeError('BASIC_PREPARATION_UNAVAILABLE',503);
-          return json(res,200,await basicPreparation.status(session));
+          return json(res,200,{...await basicPreparation.status(session),installation:basicPreparationRuntime?.publicStatus(session)??null});
         }
         if(url.pathname==='/api/basic-preparation-request'&&req.method==='POST'){
           if(url.search)throw new IntakeError('INVALID_REQUEST',400);
           if(!basicPreparation)throw new IntakeError('BASIC_PREPARATION_UNAVAILABLE',503);
           const command=await body(req,1024);keys(command,['expectedSourceHash','acknowledged']);
-          return json(res,200,await basicPreparation.request(session,command));
+          const result=await basicPreparation.request(session,command);json(res,200,result);basicPreparationRuntime?.signal();return;
         }
         if(url.pathname==='/api/service-checkout'&&req.method==='POST'){
           if(!paymentBridge)throw new IntakeError('PAYMENT_ADAPTER_UNAVAILABLE',503);
@@ -405,6 +411,13 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   server.on('listening',()=>{void productQueue.start().catch(()=>{/* No paid API fallback. */});});
   server.on('listening',()=>{void serviceQueue.start().catch(()=>{/* Keep stored attempts; no provider fallback. */});});
   server.on('close',()=>{closing=true;sessions.clear();void photoQueue.stop().catch(()=>{});void productQueue.stop().catch(()=>{});void serviceQueue.stop().catch(()=>{});});
+  server.pauseForPreparation=async()=>{
+    if(!boundary.hosted||preparationPaused||backupPaused||closing)throw Error('PREPARATION_DRAIN_UNAVAILABLE');
+    preparationPaused=true;const end=Date.now()+30_000,resume=serviceQueue.suspend(),resumeProducts=productQueue.suspend();
+    try{while(requestSlots.active||pumps.size||serviceQueue.status().active||productQueue.status().running){if(Date.now()>end)throw Error('PREPARATION_DRAIN_TIMEOUT');await new Promise(r=>setTimeout(r,25));}}
+    catch(e){resume();resumeProducts();preparationPaused=false;throw e;}
+    let released=false;return ()=>{if(released)return;released=true;resume();resumeProducts();preparationPaused=false;};
+  };
   server.pauseForBackup=async()=>{
     if(!boundary.hosted||backupPaused||closing)throw Error('BACKUP_DRAIN_UNAVAILABLE');
     backupPaused=true;const end=Date.now()+30_000,resume=serviceQueue.suspend(),resumeProducts=productQueue.suspend();

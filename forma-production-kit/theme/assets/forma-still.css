@@ -1,0 +1,29 @@
+body { letter-spacing:0; }
+.header__heading-link .h2 { font-size:34px;letter-spacing:.12em;font-weight:500; }
+.header__inline-menu .header__menu-item { font-size:14px;letter-spacing:.01em; }
+.header-wrapper--border-bottom { border-bottom-color:rgba(var(--color-foreground),.12); }
+.utility-bar .announcement-bar__message { font-size:11px;letter-spacing:.04em;min-height:36px;padding:8px 0; }
+.title,.title-wrapper-with-link h2 { letter-spacing:-.045em; }
+.collection .title-wrapper { margin-bottom:36px; }
+.card__heading { font-size:16px;letter-spacing:-.01em; }
+.card__information { padding-top:18px; }
+.card-information>.price { font-size:15px;margin-top:8px; }
+.card-wrapper .card__inner { background:rgb(var(--color-background)); }
+.card__badge .badge { border-radius:0;font-size:11px;letter-spacing:.02em; }
+.product__title h1 { font-size:clamp(30px,3vw,46px);line-height:1.15;letter-spacing:-.035em; }
+.product__description { font-size:16px;line-height:1.85; }
+.product__info-container>.product__description { margin-top:28px; }
+.product-form__input--pill input[type=radio]+label { border-radius:0;min-height:44px; }
+.product-form__submit { min-height:54px;font-size:16px; }
+.product__info-container .price { font-size:23px; }
+.button,.shopify-challenge__button { letter-spacing:0; }
+.footer { border-top-color:rgba(var(--color-foreground),.15); }
+.footer-block__heading { letter-spacing:-.025em; }
+.footer__content-bottom { border-top-color:rgba(var(--color-foreground),.15); }
+.forma-demo-notice { padding:9px 20px;margin:0;text-align:center;font-size:12px;line-height:1.5;background:#292b2d;color:#fff; }
+.forma-demo-notice a{color:inherit;text-underline-offset:3px;}
+.collection-hero__title,.main-page-title { letter-spacing:-.04em; }
+.cart-item__name { font-size:17px; }
+@media(min-width:990px){.header{padding-top:23px;padding-bottom:23px}.product--large:not(.product--no-media) .product__info-wrapper{padding-left:6rem}.footer__content-top{padding-top:30px;padding-bottom:55px}}
+@media(max-width:749px){.header__heading-link .h2{font-size:27px}.forma-demo-notice{font-size:11px;padding:8px 16px}.product__description{font-size:16px}.card__heading{font-size:14px}.card-information>.price{font-size:14px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.animate--hover-vertical-lift .card-wrapper:hover .card{transform:none}}

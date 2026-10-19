@@ -1,9 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {createRequire} from 'node:module';
 import {canonicalJson, IntakeError, PRIVATE_ROOT} from './intake-store.mjs';
 import {TaskStore} from './task-store.mjs';
 import {inspectBasicSubmissionReadiness} from './basic-submission-readiness.mjs';
+import {inspectHostedBasicCompositionCapacity} from './basic-preparation-capacity.mjs';
 
 export const BASIC_PREPARATION_TARGET = 'molyvi-still-dev.myshopify.com';
 export const BASIC_PREPARATION_LIMITS = Object.freeze({metadataBytes:1024 * 1024, requests:100, requestsPerProject:8, recordBytes:32768});
@@ -70,15 +72,16 @@ function validateRecord(record, kind, request, ownerHash, projectId) {
 // Metadata is independent of workspace.json, so requesting preparation cannot
 // invalidate the assembler's immutable full-workspace source hash. No startup
 // directory creation, provider imports, credentials, timers or network calls.
-export async function createBasicPreparationService({store,storage,targetStore=BASIC_PREPARATION_TARGET,buildEnabled=false,buildRoot,themeSource,upstreamPath,clock=Date.now}={}) {
-  if(!(store instanceof TaskStore) || typeof storage!=='string' || targetStore!==BASIC_PREPARATION_TARGET || typeof buildEnabled!=='boolean' || typeof clock!=='function')fail('CONFIG_INVALID',500);
+export async function createBasicPreparationService({store,storage,targetStore=BASIC_PREPARATION_TARGET,buildEnabled=false,buildRoot,themeSource,upstreamPath,hostedCompact=false,clock=Date.now}={}) {
+  if(!(store instanceof TaskStore) || typeof storage!=='string' || targetStore!==BASIC_PREPARATION_TARGET || typeof buildEnabled!=='boolean' || typeof hostedCompact!=='boolean' || typeof clock!=='function')fail('CONFIG_INVALID',500);
   storage=path.resolve(storage);
   if(!inside(PRIVATE_ROOT,storage) || storage===store.storage || inside(store.storage,storage) || inside(storage,store.storage))fail('PRIVATE_STORAGE_REQUIRED',500);
-  if(!buildEnabled && [buildRoot,themeSource,upstreamPath].some(value=>value!==undefined))fail('BUILD_CONFIG_DISABLED',500);
+  if(!buildEnabled && (hostedCompact||[buildRoot,themeSource,upstreamPath].some(value=>value!==undefined)))fail('BUILD_CONFIG_DISABLED',500);
   if(buildEnabled) {
     if(typeof buildRoot!=='string')fail('BUILD_ROOT_REQUIRED',500);
     buildRoot=path.resolve(buildRoot);
     if(!inside(PRIVATE_ROOT,buildRoot)||buildRoot===storage||inside(storage,buildRoot)||inside(buildRoot,storage)||buildRoot===store.storage||inside(store.storage,buildRoot)||inside(buildRoot,store.storage))fail('PRIVATE_BUILD_ROOT_REQUIRED',500);
+    if(hostedCompact&&(path.basename(store.storage)!=='workspaces'||storage!==path.join(path.dirname(store.storage),'controlled-operations','basic-preparation')||buildRoot!==path.join(path.dirname(store.storage),'controlled-operations','basic-composition')))fail('HOSTED_BUILD_SCOPE',500);
   }
   await safeDirectory(storage,true);if(buildEnabled)await safeDirectory(buildRoot,true);
   const locks=new Map();let mutations=Promise.resolve();
@@ -149,11 +152,16 @@ export async function createBasicPreparationService({store,storage,targetStore=B
     const packageManifest=JSON.parse(packageBytes),themeManifest=JSON.parse(themeBytes);
     if(packageManifest.projectId!==binding.projectId||themeManifest.projectId!==binding.projectId||packageManifest.planHash!==artifacts.planHash||themeManifest.planHash!==artifacts.planHash||themeManifest.zip?.file!=='MOLYVI_Basic_Draft.zip'||themeManifest.zip.sha256!==artifacts.themeZipSha256)fail('OUTPUT_CHANGED');
     await checkFiles(packageDirectory,packageManifest.files,['manifest.json']);
-    await checkFiles(path.join(themeDirectory,'theme'),themeManifest.files);
+    if(!hostedCompact)await checkFiles(path.join(themeDirectory,'theme'),themeManifest.files);
     const zip=await read(path.join(themeDirectory,'MOLYVI_Basic_Draft.zip'),themeManifest.zip.bytes);
     if(zip.length!==themeManifest.zip.bytes||bytesHash(zip)!==artifacts.themeZipSha256)fail('OUTPUT_CHANGED');
-    const upstream=await read(path.join(themeDirectory,'upstream.json'),32768);if(bytesHash(upstream)!==themeManifest.upstream?.recordSha256)fail('OUTPUT_CHANGED');
-    if(!same((await fs.readdir(output)).sort(),['package','theme'])||!same((await fs.readdir(themeDirectory)).sort(),['MOLYVI_Basic_Draft.zip','manifest.json','theme','upstream.json'].sort()))fail('OUTPUT_CHANGED');
+    if(hostedCompact){
+      const require=createRequire(new URL('../../forma-production-kit/package.json',import.meta.url)),JSZip=require('jszip');
+      const archive=await JSZip.loadAsync(zip,{checkCRC32:true}),expected=themeManifest.files.filter(item=>!item.file.split('/').some(bit=>bit.startsWith('.')));
+      if(!same(Object.keys(archive.files).sort(),expected.map(item=>item.file).sort()))fail('OUTPUT_CHANGED');
+      for(const item of expected){const entry=archive.files[item.file];if(entry.dir||!Number.isSafeInteger(item.bytes)||item.bytes<0||item.bytes>32*1024*1024)fail('OUTPUT_CHANGED');const bytes=await entry.async('nodebuffer');if(bytes.length!==item.bytes||bytesHash(bytes)!==item.sha256)fail('OUTPUT_CHANGED');}
+    }else{const upstream=await read(path.join(themeDirectory,'upstream.json'),32768);if(bytesHash(upstream)!==themeManifest.upstream?.recordSha256)fail('OUTPUT_CHANGED');}
+    if(!same((await fs.readdir(output)).sort(),['package','theme'])||!same((await fs.readdir(themeDirectory)).sort(),(hostedCompact?['MOLYVI_Basic_Draft.zip','manifest.json']:['MOLYVI_Basic_Draft.zip','manifest.json','theme','upstream.json']).sort()))fail('OUTPUT_CHANGED');
   }
   function publicRequest(item,sourceHash) {
     if(!item)return null;
@@ -201,26 +209,29 @@ export async function createBasicPreparationService({store,storage,targetStore=B
       if(!readiness.ready)fail('NOT_READY',422);
       if(item.outcome?.state==='prepared') {
         await verifyPreparedOutput(binding,command.requestId,item.outcome.artifacts);
+        if(hostedCompact)await inspectHostedBasicCompositionCapacity({store,session:binding,record,buildRoot,themeSource,after:true});
         if(hash(await store.read(binding.projectId,binding.ownerId))!==readiness.sourceHash)fail('SOURCE_CHANGED');
         const status=publicStatus(readiness,list,binding.projectId);status.request.outputVerifiedNow=true;return {...status,duplicate:true};
       }
       if(item.attempt)fail('ATTEMPT_ALREADY_RESERVED');
+      if(hostedCompact)await inspectHostedBasicCompositionCapacity({store,session:binding,record,buildRoot,themeSource});
       const directory=paths(binding.projectId,command.requestId).directory;
       const attempt=stamped({schemaVersion:1,kind:'molyvi_basic_preparation_attempt',projectId:binding.projectId,ownerHash:binding.ownerHash,requestId:command.requestId,sourceHash:readiness.sourceHash,requestHash:item.request.recordHash,reservedAt:now()});
       await mutate(()=>writeNew(path.join(directory,'attempt.json'),attempt));
       let artifacts=null;
       try {
-        // Heavy composition is local/operator-only, after a durable one-attempt
-        // reservation. Nothing here grants provider access or activates a job.
+        // Trusted composition after a durable one-attempt reservation. Hosted
+        // callers hold the server mutation lease; HTTP cannot supply settings.
         const {createBasicAssemblyBinding,prepareStoredBasicStorePackage,writeBasicStorePackage}=await import('./basic-store-package.mjs');
         const {buildBasicThemePackage}=await import('./basic-theme-package.mjs');
         const prepared=await prepareStoredBasicStorePackage(store,binding,{targetStore,binding:createBasicAssemblyBinding(record,{targetStore})});
         await ensureDirectory(buildRoot);const output=path.join(buildRoot,`${binding.projectId}-${command.requestId}`);
         await fs.mkdir(output,{mode:0o700});
         const written=await writeBasicStorePackage(prepared,{outputDirectory:path.join(output,'package')});
-        const theme=await buildBasicThemePackage(prepared,{outputDirectory:path.join(output,'theme'),...(themeSource?{themeSource}:{}),...(upstreamPath?{upstreamPath}:{})});
+        const theme=await buildBasicThemePackage(prepared,{outputDirectory:path.join(output,'theme'),compact:hostedCompact,...(themeSource?{themeSource}:{}),...(upstreamPath?{upstreamPath}:{})});
         artifacts={planHash:prepared.plan.planHash,packageManifestSha256:written.manifestSha256,themeManifestSha256:theme.manifestSha256,themeZipSha256:theme.zipSha256};
         await verifyPreparedOutput(binding,command.requestId,artifacts);
+        if(hostedCompact)await inspectHostedBasicCompositionCapacity({store,session:binding,record,buildRoot,themeSource,after:true});
         await mutate(()=>store.serial(binding.projectId,async()=>{
           const {record:latest}=await store.load(binding.projectId,binding.ownerId);
           if(hash(latest)!==readiness.sourceHash)fail('SOURCE_CHANGED_DURING_BUILD');
@@ -238,5 +249,28 @@ export async function createBasicPreparationService({store,storage,targetStore=B
       const result=publicStatus(readiness,list,binding.projectId);result.request.outputVerifiedNow=true;return {...result,duplicate:false};
     });
   }
-  return Object.freeze({status,request,prepare});
+  // Trusted backend handoff only. There is deliberately no HTTP route for this
+  // method and no caller-provided path, target, owner, package or authorization.
+  async function loadPrepared(session,command){
+    if(!buildEnabled)fail('LOCAL_BUILD_DISABLED',403);
+    if(!exact(command,['requestId'])||!uuid(command.requestId))fail('INVALID_REQUEST',400);
+    const binding=sessionBinding(session);
+    return serial(binding.projectId,async()=>{
+      const record=await store.read(binding.projectId,binding.ownerId),readiness=inspectBasicSubmissionReadiness(record),list=await entries(binding),item=list.find(value=>value.request.requestId===command.requestId);
+      if(!item||item.outcome?.state!=='prepared')fail('PREPARED_RESULT_REQUIRED');
+      if(!readiness.ready||item.request.sourceHash!==readiness.sourceHash||item.request.selectionHash!==hash(readiness.source))fail('SOURCE_CHANGED');
+      if(hostedCompact)await inspectHostedBasicCompositionCapacity({store,session:binding,record,buildRoot,themeSource,after:true});
+      await verifyPreparedOutput(binding,command.requestId,item.outcome.artifacts);
+      const {createBasicAssemblyBinding,prepareStoredBasicStorePackage}=await import('./basic-store-package.mjs');
+      const prepared=await prepareStoredBasicStorePackage(store,binding,{targetStore,binding:createBasicAssemblyBinding(record,{targetStore})});
+      if(prepared.plan.planHash!==item.outcome.artifacts.planHash)fail('OUTPUT_CHANGED');
+      const directory=path.join(buildRoot,`${binding.projectId}-${command.requestId}`,'theme'),manifestBytes=await fs.readFile(path.join(directory,'manifest.json')),zipBytes=await fs.readFile(path.join(directory,'MOLYVI_Basic_Draft.zip'));
+      if(bytesHash(manifestBytes)!==item.outcome.artifacts.themeManifestSha256||bytesHash(zipBytes)!==item.outcome.artifacts.themeZipSha256)fail('OUTPUT_CHANGED');
+      const manifest=JSON.parse(manifestBytes.toString('utf8'));
+      if(hash(await store.read(binding.projectId,binding.ownerId))!==readiness.sourceHash)fail('SOURCE_CHANGED');
+      const confirmation={requestId:command.requestId,sourceHash:item.request.sourceHash,requestHash:item.request.recordHash,projectId:binding.projectId,ownerHash:binding.ownerHash,planHash:prepared.plan.planHash,themeZipSha256:item.outcome.artifacts.themeZipSha256};
+      return {prepared,theme:{manifest,zipBytes},confirmation};
+    });
+  }
+  return Object.freeze({status,request,prepare,loadPrepared});
 }

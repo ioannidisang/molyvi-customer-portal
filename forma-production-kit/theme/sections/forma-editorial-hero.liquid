@@ -1,0 +1,59 @@
+{%- liquid
+  assign destination = section.settings.link | default: routes.all_products_collection_url
+  assign image_alt = section.settings.image.alt | default: section.settings.image_alt
+-%}
+<section class="forma-hero color-{{ section.settings.color_scheme }} gradient">
+  <div class="forma-hero__copy">
+    {%- if section.settings.eyebrow != blank -%}<p class="forma-eyebrow">{{ section.settings.eyebrow | escape }}</p>{%- endif -%}
+    <h1>{{ section.settings.heading | escape }}</h1>
+    <div class="forma-hero__text rte">{{ section.settings.text }}</div>
+    <a class="forma-hero__link" href="{{ destination }}">{{ section.settings.button_label | escape }}<span aria-hidden="true">↗</span></a>
+    {%- if section.settings.caption != blank -%}<p class="forma-hero__caption">{{ section.settings.caption | escape }}</p>{%- endif -%}
+  </div>
+  <div class="forma-hero__media">
+    {%- if section.settings.image != blank -%}
+      {{ section.settings.image | image_url: width: 1800 | image_tag: widths: '480, 750, 1100, 1500, 1800', sizes: '(min-width: 750px) 54vw, 100vw', loading: 'eager', fetchpriority: 'high', alt: image_alt }}
+    {%- elsif settings.forma_demo_mode -%}
+      <img src="{{ 'forma-still-hero.webp' | asset_url }}" alt="{{ section.settings.image_alt | escape }}" width="768" height="960" fetchpriority="high" loading="eager">
+    {%- else -%}
+      {{ 'product-1' | placeholder_svg_tag: 'placeholder-svg' }}
+    {%- endif -%}
+  </div>
+</section>
+{% stylesheet %}
+  .forma-hero { display:grid; grid-template-columns:.95fr 1.05fr; min-height:640px; }
+  .forma-hero__copy { padding:clamp(40px,7vw,115px) clamp(24px,6vw,100px); display:flex; flex-direction:column; align-items:flex-start; justify-content:center; }
+  .forma-eyebrow { margin:0 0 24px; font-size:12px; letter-spacing:.18em; text-transform:uppercase; }
+  .forma-hero h1 { font-size:clamp(40px,4.8vw,76px); line-height:1.09; letter-spacing:-.05em; max-width:12ch; margin:0; }
+  .forma-hero__text { max-width:38rem; margin:24px 0 28px; font-size:16px; line-height:1.8; }
+  .forma-hero__text p { margin:0; }
+  .forma-hero__link { display:flex; align-items:center; justify-content:space-between; gap:55px; min-height:50px; padding:12px 0; color:rgb(var(--color-foreground)); text-decoration:none; border-bottom:1px solid currentColor; }
+  .forma-hero__link span { transition:transform .2s; }
+  .forma-hero__link:hover span { transform:translate(3px,-3px); }
+  .forma-hero__caption { margin:35px 0 0; font-size:12px; letter-spacing:.03em; }
+  .forma-hero__media { position:relative; min-height:640px; overflow:hidden; }
+  .forma-hero__media img,.forma-hero__media svg { width:100%; height:100%; object-fit:cover; display:block; position:absolute; inset:0; }
+  @media(max-width:749px) { .forma-hero { grid-template-columns:1fr; min-height:0; } .forma-hero__copy{padding:48px 24px 40px;} .forma-hero h1{font-size:46px;max-width:13ch;} .forma-hero__media{min-height:0;aspect-ratio:1.1;} .forma-hero__caption{margin-top:24px;} }
+  @media(prefers-reduced-motion:reduce){.forma-hero__link span{transition:none;}}
+{% endstylesheet %}
+{% schema %}
+{
+  "name": "t:forma.hero.name",
+  "tag": "div",
+  "class": "forma-hero-section",
+  "limit": 1,
+  "enabled_on": {"templates": ["index"]},
+  "settings": [
+    {"type":"text","id":"eyebrow","label":"t:forma.hero.eyebrow"},
+    {"type":"text","id":"heading","label":"t:forma.hero.heading","default":"Space for the everyday"},
+    {"type":"richtext","id":"text","label":"t:forma.hero.text"},
+    {"type":"text","id":"button_label","label":"t:forma.hero.button_label","default":"Explore the collection"},
+    {"type":"url","id":"link","label":"t:forma.hero.link"},
+    {"type":"image_picker","id":"image","label":"t:forma.hero.image"},
+    {"type":"text","id":"image_alt","label":"t:forma.hero.image_alt"},
+    {"type":"text","id":"caption","label":"t:forma.hero.caption"},
+    {"type":"color_scheme","id":"color_scheme","label":"t:forma.hero.colors","default":"scheme-2"}
+  ],
+  "presets": [{"name":"t:forma.hero.name"}]
+}
+{% endschema %}

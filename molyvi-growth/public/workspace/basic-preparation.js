@@ -1,6 +1,7 @@
 'use strict';
 // Readiness has no side effects. Only an explicit acknowledgement records a
-// preparation request; neither this view nor its endpoint installs a store.
+// preparation request. A separately authorized server worker may compose/install
+// the exact approved development-store package; the browser grants no store rights.
 window.MolyviBasicPreparation=(()=>{
   let enabled=false,api=null,context=()=>null,projectId=null,inFlight=false,lastRead=0,signature='',latest=null;
   const node=(tag,text)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;return e;};
@@ -16,6 +17,11 @@ window.MolyviBasicPreparation=(()=>{
     if(blockers.length){const details=node('details'),list=node('ul'),workspace=context(),tasks=workspace?.tasks??[],products=tasks.find(task=>task.id==='catalog')?.draft?.products??[];details.append(node('summary',`Τι απομένει (${blockers.length})`));for(const item of blockers){const label=item.productId?products.find(product=>product.id===item.productId)?.title:tasks.find(task=>task.id===item.taskId)?.title;list.append(node('li',`${label?label+': ':''}${item.message}`));}details.append(list);p.append(details);}
     const stale=request&&(request.stale===true||request.state==='stale'||request.sourceHash!==data.sourceHash);
     if(request&&!stale){
+      const progress=data.installation;
+      if(progress&&progress.stage!=='waiting_confirmation'){
+        const text={preparing:'Συνθέτουμε το κατάστημά σου και ελέγχουμε τα αρχεία του.',installation_review:'Το πακέτο είναι έτοιμο. Ελέγχουμε τη σύνδεση με το δοκιμαστικό κατάστημα.',installing:'Εγκαθιστούμε τα προϊόντα, τις σελίδες και την εμφάνιση στο δοκιμαστικό κατάστημα.',installed_draft:'Η εγκατάσταση και ο έλεγχος του πακέτου ολοκληρώθηκαν. Το κατάστημα παραμένει σε Draft και δεν έχει δημοσιευτεί.',blocked:'Η διαδικασία σταμάτησε για έλεγχο από την ομάδα Molyvi. Το ήδη αποθηκευμένο υλικό σου διατηρείται.'}[progress.stage];
+        if(text){const status=node('p',text);status.setAttribute('role','status');p.append(status);return;}
+      }
       const labels={requested:'Η επιβεβαίωσή σου καταγράφηκε. Ακολουθεί η σύνθεση και ο έλεγχος του ιδιωτικού πακέτου.',preparing:'Το πακέτο βρίσκεται σε προετοιμασία.',prepared_for_installation_review:'Το πακέτο ετοιμάστηκε για τον εσωτερικό έλεγχο εγκατάστασης.',preparation_failed:'Η προετοιμασία χρειάζεται έλεγχο από την ομάδα Molyvi.',preparation_unknown:'Η προετοιμασία χρειάζεται έλεγχο από την ομάδα Molyvi.'};
       const status=node('p',labels[request.state]??'Το αίτημα προετοιμασίας έχει καταγραφεί. Η ομάδα Molyvi ελέγχει το επόμενο στάδιο.');status.setAttribute('role','status');p.append(status);return;
     }

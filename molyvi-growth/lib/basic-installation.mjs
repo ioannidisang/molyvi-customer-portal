@@ -25,15 +25,24 @@ export const BASIC_INSTALL_HOSTED_ROOT=path.join(WORKSPACE_ROOT,'briefs','molyvi
 export const BASIC_INSTALL_HOSTED_REGISTRY=path.join(BASIC_INSTALL_HOSTED_ROOT,'runtime','registry');
 export const BASIC_INSTALL_HOSTED_CONTINUATION_REGISTRY=path.join(BASIC_INSTALL_HOSTED_ROOT,'runtime','continuations');
 export const BASIC_INSTALL_HOSTED_JOBS_ROOT=path.join(BASIC_INSTALL_HOSTED_ROOT,'jobs');
-function profile(value){if(value!==undefined&&value!==BASIC_INSTALL_HOSTED_PROFILE)fail('RUNTIME_PROFILE_INVALID');return value;}
-const runtimeRegistry=value=>profile(value)===BASIC_INSTALL_HOSTED_PROFILE?BASIC_INSTALL_HOSTED_CONTINUATION_REGISTRY:BASIC_INSTALL_CONTINUATION_REGISTRY;
+export const BASIC_INSTALL_PREPARED_PROFILE='hosted_prepared_basic_v1';
+export const BASIC_INSTALL_PREPARED_ROOT=path.join(WORKSPACE_ROOT,'briefs','molyvi-hosted-staging','controlled-operations','basic-prepared-installer');
+export const BASIC_INSTALL_PREPARED_REGISTRY=path.join(BASIC_INSTALL_PREPARED_ROOT,'runtime','registry');
+export const BASIC_INSTALL_PREPARED_CONTINUATION_REGISTRY=path.join(BASIC_INSTALL_PREPARED_ROOT,'runtime','continuations');
+export const BASIC_INSTALL_PREPARED_JOBS_ROOT=path.join(BASIC_INSTALL_PREPARED_ROOT,'jobs');
+function profile(value){if(value!==undefined&&![BASIC_INSTALL_HOSTED_PROFILE,BASIC_INSTALL_PREPARED_PROFILE].includes(value))fail('RUNTIME_PROFILE_INVALID');return value;}
+const runtimeRegistry=value=>profile(value)===BASIC_INSTALL_HOSTED_PROFILE?BASIC_INSTALL_HOSTED_CONTINUATION_REGISTRY:value===BASIC_INSTALL_PREPARED_PROFILE?BASIC_INSTALL_PREPARED_CONTINUATION_REGISTRY:BASIC_INSTALL_CONTINUATION_REGISTRY;
 const continuationFile=(key,value)=>path.join(runtimeRegistry(value),`${key}.json`);
 function profilePaths(value,registry,directory,projectId,{continuation=false}={}){
   profile(value);
   if(value===BASIC_INSTALL_HOSTED_PROFILE){
     if(registry!==BASIC_INSTALL_HOSTED_REGISTRY)fail('RUNTIME_REGISTRY_MISMATCH');
     if(directory!==undefined&&!['journal',...(continuation?['continuation-journal']:[])].some(name=>directory===path.join(BASIC_INSTALL_HOSTED_JOBS_ROOT,projectId,name)))fail('RUNTIME_JOURNAL_MISMATCH');
-  }else if([registry,directory].some(item=>typeof item==='string'&&(item===BASIC_INSTALL_HOSTED_ROOT||inside(BASIC_INSTALL_HOSTED_ROOT,item))))fail('RUNTIME_PROFILE_REQUIRED');
+  }else if(value===BASIC_INSTALL_PREPARED_PROFILE){
+    if(registry!==BASIC_INSTALL_PREPARED_REGISTRY)fail('RUNTIME_REGISTRY_MISMATCH');
+    if(directory!==undefined&&directory!==path.join(BASIC_INSTALL_PREPARED_JOBS_ROOT,projectId,'journal'))fail('RUNTIME_JOURNAL_MISMATCH');
+    if(continuation)fail('PREPARED_CONTINUATION_NOT_SUPPORTED');
+  }else if([registry,directory].some(item=>typeof item==='string'&&[BASIC_INSTALL_HOSTED_ROOT,BASIC_INSTALL_PREPARED_ROOT].some(root=>item===root||inside(root,item))))fail('RUNTIME_PROFILE_REQUIRED');
 }
 
 // This module never calls Shopify or any network/provider. It records trusted
@@ -170,11 +179,11 @@ export async function createBasicInstallation({directory,registryDirectory,runti
   const registry=await safeDirectory(registryDirectory),registryKey=hash({targetStore:scope.targetStore,projectId:scope.projectId});
   // A canonical continuation reservation remains authoritative even if a
   // caller supplies another legacy registry for the same store/project.
-  for(const selected of [undefined,BASIC_INSTALL_HOSTED_PROFILE]){
+  for(const selected of [undefined,BASIC_INSTALL_HOSTED_PROFILE,BASIC_INSTALL_PREPARED_PROFILE]){
     try{await safeDirectory(runtimeRegistry(selected));await readJson(continuationFile(registryKey,selected));fail('INSTALLATION_ALREADY_CONTINUED');}catch(error){if(error.code!=='ENOENT')throw error;}
   }
   // A hosted reservation cannot be bypassed by selecting a legacy registry.
-  if(snapshot.runtimeProfile===undefined){try{await safeDirectory(BASIC_INSTALL_HOSTED_REGISTRY);await readJson(path.join(BASIC_INSTALL_HOSTED_REGISTRY,`${registryKey}.json`));fail('INSTALLATION_ALREADY_RESERVED');}catch(error){if(error.code!=='ENOENT')throw error;}}
+  for(const reservedRegistry of [BASIC_INSTALL_HOSTED_REGISTRY,BASIC_INSTALL_PREPARED_REGISTRY])if(reservedRegistry!==registry){try{await safeDirectory(reservedRegistry);await readJson(path.join(reservedRegistry,`${registryKey}.json`));fail('INSTALLATION_ALREADY_RESERVED');}catch(error){if(error.code!=='ENOENT')throw error;}}
   const body={schemaVersion:1,kind:'molyvi_basic_controlled_installation',mode:'create_only_operator_journal',...(snapshot.runtimeProfile?{runtimeProfile:snapshot.runtimeProfile}:{}),...scope,...themeCheck,registryDirectory:registry,registryKey,packageBytesHash:hash({plan,uploads}),namespace:plan.namespace,authorization:authorization(snapshot.grant,scope),preflightEvidence:evidence(snapshot.preflightEvidence),liveThemeId:snapshot.liveThemeId,inventoryLocationId:snapshot.inventoryLocationId,currency:snapshot.currency,preexistingResources:snapshot.preexistingResources,steps,networkEnabled:false,publicationAuthorized:false,newChargesAuthorized:false,overwriteExisting:false};
   const intent=validateIntent({...body,intentHash:hash(body)});contextFor(intent,snapshot.context);
   const absolute=await safeDirectory(directory,{newDirectory:true});

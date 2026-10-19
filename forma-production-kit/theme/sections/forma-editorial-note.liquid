@@ -1,0 +1,28 @@
+<section class="forma-note page-width">
+  <p class="forma-note__index">{{ section.settings.label | escape }}</p>
+  <div><h2>{{ section.settings.heading | escape }}</h2><div class="rte">{{ section.settings.text }}</div></div>
+  {%- if section.settings.link != blank and section.settings.link_label != blank -%}
+    <a href="{{ section.settings.link }}">{{ section.settings.link_label | escape }} <span aria-hidden="true">↗</span></a>
+  {%- endif -%}
+</section>
+{% stylesheet %}
+  .forma-note{display:grid;grid-template-columns:.35fr 1.4fr .6fr;gap:5vw;align-items:start;padding-top:75px;padding-bottom:75px;border-top:1px solid rgba(var(--color-foreground),.15);border-bottom:1px solid rgba(var(--color-foreground),.15);}
+  .forma-note__index{font-size:12px;letter-spacing:.12em;margin:6px 0;}
+  .forma-note h2{font-size:clamp(30px,3.6vw,50px);line-height:1.16;letter-spacing:-.04em;margin:0 0 22px;}
+  .forma-note .rte{font-size:16px;line-height:1.8;max-width:58rem;}
+  .forma-note a{justify-self:end;color:inherit;text-underline-offset:5px;font-size:14px;}
+  @media(max-width:749px){.forma-note{display:block;padding:44px 24px}.forma-note__index{margin-bottom:20px}.forma-note a{display:inline-block;margin-top:20px}.forma-note h2{font-size:34px}}
+{% endstylesheet %}
+{% schema %}
+{
+ "name":"t:forma.note.name",
+ "settings":[
+  {"type":"text","id":"label","label":"t:forma.note.label"},
+  {"type":"text","id":"heading","label":"t:forma.hero.heading","default":"Thoughtful objects"},
+  {"type":"richtext","id":"text","label":"t:forma.hero.text"},
+  {"type":"url","id":"link","label":"t:forma.hero.link"},
+  {"type":"text","id":"link_label","label":"t:forma.hero.button_label"}
+ ],
+ "presets":[{"name":"t:forma.note.name"}]
+}
+{% endschema %}

@@ -2,8 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {canonicalJson,IntakeError,WORKSPACE_ROOT} from './intake-store.mjs';
-import {readBasicInstallation,claimBasicInstallationStep,recordBasicInstallationReceipt,reconcileBasicInstallationStep,getBasicInstallationRuntimeRegistry,BASIC_INSTALL_HOSTED_PROFILE,BASIC_INSTALL_HOSTED_REGISTRY,BASIC_INSTALL_HOSTED_ROOT} from './basic-installation.mjs';
-import {createBasicThemeProgress,BASIC_THEME_PROGRESS_INSTALLER_HOSTED_ROOT} from './basic-theme-progress.mjs';
+import {readBasicInstallation,claimBasicInstallationStep,recordBasicInstallationReceipt,reconcileBasicInstallationStep,getBasicInstallationRuntimeRegistry,BASIC_INSTALL_HOSTED_PROFILE,BASIC_INSTALL_HOSTED_REGISTRY,BASIC_INSTALL_HOSTED_ROOT,BASIC_INSTALL_PREPARED_PROFILE,BASIC_INSTALL_PREPARED_REGISTRY,BASIC_INSTALL_PREPARED_ROOT} from './basic-installation.mjs';
+import {createBasicThemeProgress,BASIC_THEME_PROGRESS_INSTALLER_HOSTED_ROOT,BASIC_THEME_PROGRESS_PREPARED_HOSTED_ROOT} from './basic-theme-progress.mjs';
 
 const kinds=new Set(['catalog','media','variant_media','collection','page','theme']);
 const hash=value=>crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
@@ -45,10 +45,11 @@ function binding(state){
  * this module. A hostile transport or local administrator is out of scope.
  */
 export async function createBasicInstallationRunner({registryDirectory,runtimeProfile,trustedShop,transport,operatorId,timeoutMs=30_000,themeWaitMs=20_000,themeClock=Date.now,themeSleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))}={}){
-  if(runtimeProfile!==undefined&&runtimeProfile!==BASIC_INSTALL_HOSTED_PROFILE)fail('RUNTIME_PROFILE_INVALID');
+  if(runtimeProfile!==undefined&&![BASIC_INSTALL_HOSTED_PROFILE,BASIC_INSTALL_PREPARED_PROFILE].includes(runtimeProfile))fail('RUNTIME_PROFILE_INVALID');
   const registry=await registryPath(registryDirectory),shop=structuredClone(trustedShop);
   if(runtimeProfile===BASIC_INSTALL_HOSTED_PROFILE&&registry!==BASIC_INSTALL_HOSTED_REGISTRY)fail('RUNTIME_REGISTRY_MISMATCH');
-  if(runtimeProfile===undefined&&(registry===BASIC_INSTALL_HOSTED_ROOT||inside(BASIC_INSTALL_HOSTED_ROOT,registry)))fail('RUNTIME_PROFILE_REQUIRED');
+  if(runtimeProfile===BASIC_INSTALL_PREPARED_PROFILE&&registry!==BASIC_INSTALL_PREPARED_REGISTRY)fail('RUNTIME_REGISTRY_MISMATCH');
+  if(runtimeProfile===undefined&&[BASIC_INSTALL_HOSTED_ROOT,BASIC_INSTALL_PREPARED_ROOT].some(root=>registry===root||inside(root,registry)))fail('RUNTIME_PROFILE_REQUIRED');
   if(!shop||!id(shop.shopId)||!domain(shop.targetStore)||Object.keys(shop).some(key=>!['shopId','targetStore'].includes(key)))fail('TRUSTED_SHOP_REQUIRED');
   if(typeof operatorId!=='string'||!operatorId||operatorId.length>200||/[\x00-\x1f]/.test(operatorId))fail('OPERATOR_REQUIRED');
   if(!Number.isSafeInteger(timeoutMs)||timeoutMs<10||timeoutMs>60_000)fail('TIMEOUT_LIMIT');
@@ -128,7 +129,7 @@ export async function createBasicInstallationRunner({registryDirectory,runtimePr
     return {receipt:{remoteId:response.remoteId,payloadHash:step.payloadHash,observed,evidence},evidence,provenanceSha256};
   }
   function progressFor(state,step,options){
-    return createBasicThemeProgress({binding:{...binding(state),shopId:shop.shopId,appId:'436878311425',installId:'1195450433873',liveThemeId:state.intent.liveThemeId},attemptId:state.steps[step.key].attemptId,dependenciesHash:hash(Object.fromEntries(step.dependsOn.map(key=>[key,state.steps[key].receipt]))),journalDirectory:path.resolve(options.directory),registryKey:state.intent.registryKey,clock:themeClock,...(runtimeProfile?{runtimeProfile,rootDirectory:BASIC_THEME_PROGRESS_INSTALLER_HOSTED_ROOT}:{})});
+    return createBasicThemeProgress({binding:{...binding(state),shopId:shop.shopId,appId:'436878311425',installId:'1195450433873',liveThemeId:state.intent.liveThemeId},attemptId:state.steps[step.key].attemptId,dependenciesHash:hash(Object.fromEntries(step.dependsOn.map(key=>[key,state.steps[key].receipt]))),journalDirectory:path.resolve(options.directory),registryKey:state.intent.registryKey,clock:themeClock,...(runtimeProfile?{runtimeProfile,rootDirectory:runtimeProfile===BASIC_INSTALL_PREPARED_PROFILE?BASIC_THEME_PROGRESS_PREPARED_HOSTED_ROOT:BASIC_THEME_PROGRESS_INSTALLER_HOSTED_ROOT}:{})});
   }
   const waitingState=(state,progress)=>({...state,duplicate:false,waiting:{kind:'shopify_theme_processing',stepKey:'theme',remoteId:progress.themeId,nextCheckAt:progress.nextEligibleAt,deadlineAt:progress.deadlineAt,automaticRechecks:true,backgroundSchedulerActive:false}});
   async function themeFailure(progress,error){

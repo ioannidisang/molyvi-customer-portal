@@ -1,0 +1,8 @@
+{
+  "name": "forma-still-production-kit",
+  "version": "0.2.2",
+  "private": true,
+  "scripts": {"test":"node --test tests/*.test.mjs","package":"node scripts/package-kit.cjs"},
+  "engines": {"node": ">=20"},
+  "devDependencies": {"jszip":"3.10.1"}
+}
