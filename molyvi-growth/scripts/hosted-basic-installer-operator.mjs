@@ -4,8 +4,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
-import {PRIVATE_ROOT,canonicalJson} from '../lib/intake-store.mjs';
-import {createReceiver,acceptEnvelope,readExactToken,HOSTED_BASIC_INSTALLER_ACCESS_ROOT} from '../lib/hosted-basic-installer-access.mjs';
+try{
+  const args=process.argv.slice(2),[command,arg]=args;let result;
+  if(command==='--inspect'){
+    if(args.length!==1)throw Error('OPERATOR_ARGUMENTS_INVALID');
+    // Inspect through the existing passive snapshot reader. Loading the worker
+    // would acquire journal writer locks and could interrupt an active install.
+    // This branch imports no installer/access module and never reads a token.
+    const {collectHostedBasicInstallation}=await import('./read-hosted-basic-installation.mjs');
+    result=await collectHostedBasicInstallation();
+    console.log(JSON.stringify({marker:'MOLYVI_REAL_INSTALLER',result}));
+  }else{
+  const {PRIVATE_ROOT,canonicalJson}=await import('../lib/intake-store.mjs');
+  const {createReceiver,acceptEnvelope,readExactToken,HOSTED_BASIC_INSTALLER_ACCESS_ROOT}=await import('../lib/hosted-basic-installer-access.mjs');
 const sha=x=>crypto.createHash('sha256').update(x).digest('hex'),hash=x=>sha(canonicalJson(x));
 const fixture=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../qa/hosted-installer-20261019');
 const proposal=JSON.parse(await fs.readFile(path.join(fixture,'proposal.json'),'utf8'));
@@ -14,8 +25,6 @@ const common={runId:proposal.jobId,packageSha256:proposal.packageSha256};
 const write=async(file,value)=>fs.writeFile(file,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});
 const receiver=async()=>JSON.parse(await fs.readFile(path.join(HOSTED_BASIC_INSTALLER_ACCESS_ROOT,proposal.jobId,'receiver.json'),'utf8'));
 async function safeDirectory(dir){const absolute=path.resolve(dir);let current=path.parse(absolute).root;for(const bit of absolute.slice(current.length).split(path.sep).filter(Boolean)){current=path.join(current,bit);const s=await fs.lstat(current);if(!s.isDirectory()||s.isSymbolicLink())throw Error('UNSAFE_INPUT_DIRECTORY');}if(await fs.realpath(absolute)!==absolute)throw Error('UNSAFE_INPUT_DIRECTORY');}
-try{
-  const [command,arg]=process.argv.slice(2);let result;
   if(command==='--receiver'&&!arg)result=await createReceiver(common);
   else if(command==='--accept'&&arg&&arg.length<24000){
     const record=await receiver(),envelope=JSON.parse(Buffer.from(arg,'base64').toString('utf8'));
@@ -39,8 +48,7 @@ try{
     await write(path.join(path.dirname(result.configFile),'fresh-preflight.json'),preflight);
     await write(HOSTED_BASIC_INSTALLER_ACTIVATION_FILE,{schemaVersion:1,mode:'real_basic_draft_test',jobId:proposal.jobId,projectId:proposal.projectId,packageSha256:proposal.packageSha256,configSha256:result.configSha256,receiverSha256:rec.receiverSha256});
     result={...result,armed:true,shopifyRequests:1,shopifyWrites:0,sourceBytes,publication:false,newCharges:false};
-  }else if(command==='--inspect'&&!arg){
-    const {loadHostedBasicInstallerActivation}=await import('../lib/hosted-basic-installer-activation.mjs');const worker=await loadHostedBasicInstallerActivation();if(!worker)throw Error('NOT_ACTIVATED');result=await worker.inspect();
   }else throw Error('OPERATOR_ARGUMENTS_INVALID');
   console.log(JSON.stringify({marker:'MOLYVI_REAL_INSTALLER',result}));
+  }
 }catch(e){const code=typeof e.code==='string'&&/^[A-Z][A-Z0-9_]{2,120}$/.test(e.code)?e.code:typeof e.message==='string'&&/^[A-Z][A-Z0-9_]{2,120}$/.test(e.message)?e.message:'OPERATOR_STOPPED';console.log(JSON.stringify({marker:'MOLYVI_REAL_INSTALLER',status:'STOP',code}));process.exitCode=1;}
