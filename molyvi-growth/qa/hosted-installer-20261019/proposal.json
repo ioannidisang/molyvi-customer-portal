@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "jobId": "9e1bfcc0-1f1c-41f2-a369-1ad65b0fad9a",
+  "packageSha256": "2a1a942a0083f9f8160611f5c004d75229cdb222a3887f5e09052b21db244431",
+  "packageBytes": 1762509,
+  "projectId": "6018a065-af86-4e4b-8f67-730e1adb3519",
+  "ownerHash": "27e556cac218c88491c6ab05e3ceae4669d3ad2b10b83f31f0376742febb82c3",
+  "planHash": "519411c39ba5241de48c11885354d5dd2eaf08cee49a3fedaae39e618a2eeeb1",
+  "themeZipSha256": "b2e3f0e931f777307ee03a83aa32d0707e9c12423ebd8c58c3c91786b7690d69",
+  "themeBytes": 1146188,
+  "counts": {
+    "products": 1,
+    "variants": 3,
+    "visualUnits": 1,
+    "photos": 3,
+    "pages": 7
+  },
+  "targetStore": "molyvi-still-dev.myshopify.com",
+  "shopId": "108668748113",
+  "appId": "436878311425",
+  "installId": "1195450433873",
+  "liveThemeId": "207379235153",
+  "locationId": "125398417745",
+  "fresh": true,
+  "publicationAuthorized": false,
+  "newChargesAuthorized": false,
+  "authorizationSha256": "febc64ed93a2f654a2933b72ed544052a0435a549114e964dc7d7addd189cd22"
+}

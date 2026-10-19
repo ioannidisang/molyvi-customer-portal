@@ -1,0 +1,8 @@
+{
+  "name": "molyvi-hosted-installer-runtime",
+  "version": "0.48.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=24"},
+  "dependencies": {"jszip": "3.10.1", "sharp": "0.35.5"}
+}

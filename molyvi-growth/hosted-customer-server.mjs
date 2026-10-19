@@ -18,15 +18,17 @@ import {loadHostedOperationsConfig,runHostedOperations} from './lib/hosted-servi
 import {loadHostedCatalogConfig,runHostedCatalogExtension} from './lib/hosted-catalog-extension.mjs';
 import {createHostedThemeRechecks} from './lib/hosted-theme-rechecks.mjs';
 import {loadHostedThemeRecheckActivation} from './lib/hosted-theme-recheck-activation.mjs';
+import {loadHostedBasicInstallerActivation} from './lib/hosted-basic-installer-activation.mjs';
 
-export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig}={}){
+export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller=null}={}){
   createRequestBoundary({publicOrigin,healthHosts});
   const accounts=await new CustomerStore(path.join(storage,'accounts')).ready();let server,themeRechecks;
   try{
     const workspaces=await new TaskStore(path.join(storage,'workspaces')).ready(),notifications=await new CustomerNotifications({accounts,workspaces,storage:path.join(storage,'mail'),portalUrl:publicOrigin+'/customer/',transport}).ready(),
       deliveries=await new CustomerDelivery({accounts,workspaces,storage:path.join(storage,'deliveries'),notifications}).ready();
     const testPayments=testPaymentConfig?createHostedTestPayments({store:workspaces,notifications,config:testPaymentConfig}):null;
-    if([controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig].filter(Boolean).length>1)throw Error('HOSTED_STARTUP_OPERATION_EXCLUSIVE');
+    if([controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller].filter(Boolean).length>1)throw Error('HOSTED_STARTUP_OPERATION_EXCLUSIVE');
+    if(basicInstaller&&['start','pause','drain','resume','stop','status'].some(k=>typeof basicInstaller[k]!=='function'))throw Error('HOSTED_INSTALLER_LIFECYCLE_INVALID');
     const controlledPro=controlledProConfig?await createHostedControlledPro({config:controlledProConfig,storage:path.join(storage,'controlled-pro'),store:workspaces,accounts}):null;
     if(photoOperationConfig){if(controlledProConfig)throw Error('HOSTED_PHOTO_OPERATION_EXCLUSIVE');await runHostedPhotoOperation({config:photoOperationConfig,store:workspaces,accounts,storage:path.join(storage,'controlled-photos')});}
     if(operationsConfig)await runHostedOperations({config:operationsConfig,store:workspaces,accounts,storage:path.join(storage,'controlled-operations')});
@@ -37,12 +39,12 @@ export async function createHostedCustomerServer({publicOrigin,healthHosts=[],st
     server=await createWorkspaceApp({storage:workspaces.storage,customerAccess:{accounts,notifications,deliveries,workspaces},hostedTestPayments:testPayments,hostedControlledPro:controlledPro,deployment:{publicOrigin,healthHosts}});
     let interval,stopping=false,active,stopPromise,backupPaused=false;
     const tick=()=>{if(!stopping&&!backupPaused&&!active)active=notifications.tick().catch(()=>{}).finally(()=>{active=null;});};
-    server.on('listening',()=>{if(transport){interval=setInterval(tick,1000);tick();}themeRechecks?.start();});
-    const stop=()=>stopPromise??=(async()=>{stopping=true;clearInterval(interval);themeRechecks?.pause();server.closeIdleConnections();await Promise.all([server.drainWorkers(),themeRechecks?.stop()]);if(server.listening)await new Promise(r=>server.close(r));await active;accounts.close();})();
-    server.on('close',()=>{clearInterval(interval);void themeRechecks?.stop();});
-    const quietSnapshot=async fn=>{backupPaused=true;themeRechecks?.pause();let resume;try{resume=await server.pauseForBackup();await Promise.all([active,themeRechecks?.drain()]);return await fn();}finally{resume?.();backupPaused=false;if(!stopping&&themeRechecks?.status().lifecycle==='paused')themeRechecks.resume();}};
-    return {server,accounts,workspaces,notifications,deliveries,testPayments,themeRechecks,stop,quietSnapshot};
-  }catch(e){await themeRechecks?.stop();accounts.close();throw e;}
+    server.on('listening',()=>{if(transport){interval=setInterval(tick,1000);tick();}themeRechecks?.start();basicInstaller?.start();});
+    const stop=()=>stopPromise??=(async()=>{stopping=true;clearInterval(interval);themeRechecks?.pause();basicInstaller?.pause();server.closeIdleConnections();await Promise.all([server.drainWorkers(),themeRechecks?.stop(),basicInstaller?.stop()]);if(server.listening)await new Promise(r=>server.close(r));await active;accounts.close();})();
+    server.on('close',()=>{clearInterval(interval);void themeRechecks?.stop();void basicInstaller?.stop();});
+    const quietSnapshot=async fn=>{backupPaused=true;themeRechecks?.pause();basicInstaller?.pause();let resume;try{resume=await server.pauseForBackup();await Promise.all([active,themeRechecks?.drain(),basicInstaller?.drain()]);return await fn();}finally{resume?.();backupPaused=false;if(!stopping&&themeRechecks?.status().lifecycle==='paused')themeRechecks.resume();if(!stopping&&basicInstaller?.status().lifecycle==='paused')basicInstaller.resume();}};
+    return {server,accounts,workspaces,notifications,deliveries,testPayments,themeRechecks,basicInstaller,stop,quietSnapshot};
+  }catch(e){await themeRechecks?.stop();await basicInstaller?.stop();accounts.close();throw e;}
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   if(process.env.MOLYVI_HOSTED_ENABLED!=='true')throw Error('HOSTED_ACTIVATION_REQUIRED');
@@ -61,10 +63,12 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   const photoOperationConfig=await loadHostedPhotoConfig({enabled:process.env.MOLYVI_HOSTED_PHOTO_IMPORT_ENABLED==='true'});
   const operationsConfig=await loadHostedOperationsConfig({enabled:process.env.MOLYVI_HOSTED_OPERATIONS_ENABLED==='true'});
   const catalogExtensionConfig=await loadHostedCatalogConfig({enabled:process.env.MOLYVI_HOSTED_CATALOG_EXTENSION_ENABLED==='true'});
-  let themeRecheckConfig,themeRecheckStartupBlocked=false;
-  try{themeRecheckConfig=await loadHostedThemeRecheckActivation();}catch{themeRecheckStartupBlocked=true;console.error('MOLYVI_THEME_RECHECK_STARTUP_BLOCKED');}
-  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig});
-  await fs.writeFile(path.join(storage,'hosted-scope.json'),JSON.stringify({mode:'hosted_staging',realEmailEnabled:Boolean(transport),testPaymentsEnabled:Boolean(app.testPayments),controlledLocalProEnabled:Boolean(controlledProConfig),photoStartupOperationEnabled:Boolean(photoOperationConfig),operationsStartupEnabled:Boolean(operationsConfig),catalogExtensionEnabled:Boolean(catalogExtensionConfig),themeRecheckProbeConfigured:Boolean(themeRecheckConfig),themeRecheckStartupBlocked,shopifyInstallerWorkerEnabled:false,aiWorkersEnabled:false,realPaymentsEnabled:false,cloudArchiveActive:false})+'\n',{mode:0o600});
+  let themeRecheckConfig,themeRecheckStartupBlocked=false,basicInstaller=null,basicInstallerStartupBlocked=false;
+  try{basicInstaller=await loadHostedBasicInstallerActivation();}catch{basicInstallerStartupBlocked=true;console.error('MOLYVI_BASIC_INSTALLER_STARTUP_BLOCKED');}
+  // An explicit real permit never falls back to the historical synthetic job.
+  if(!basicInstaller&&!basicInstallerStartupBlocked)try{themeRecheckConfig=await loadHostedThemeRecheckActivation();}catch{themeRecheckStartupBlocked=true;console.error('MOLYVI_THEME_RECHECK_STARTUP_BLOCKED');}
+  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller});
+  await fs.writeFile(path.join(storage,'hosted-scope.json'),JSON.stringify({mode:'hosted_staging',realEmailEnabled:Boolean(transport),testPaymentsEnabled:Boolean(app.testPayments),controlledLocalProEnabled:Boolean(controlledProConfig),photoStartupOperationEnabled:Boolean(photoOperationConfig),operationsStartupEnabled:Boolean(operationsConfig),catalogExtensionEnabled:Boolean(catalogExtensionConfig),themeRecheckProbeConfigured:Boolean(themeRecheckConfig),themeRecheckStartupBlocked,shopifyInstallerWorkerEnabled:Boolean(basicInstaller),basicInstallerStartupBlocked,aiWorkersEnabled:false,realPaymentsEnabled:false,cloudArchiveActive:false})+'\n',{mode:0o600});
   let backups;
   try{backups=await createAutomaticBackups({storage,release:process.env.RENDER_GIT_COMMIT,quietSnapshot:app.quietSnapshot,transport});}
   catch{console.error('MOLYVI_AUTOMATIC_BACKUP_STARTUP_BLOCKED');await reportBackupStartupFailure(transport);}

@@ -8,7 +8,7 @@ services:
     plan: 0.5c-512mb
     numInstances: 1
     autoDeployTrigger: "off"
-    buildCommand: node --check molyvi-growth/hosted-customer-server.mjs
+    buildCommand: npm ci --ignore-scripts --no-audit --no-fund && node --check molyvi-growth/hosted-customer-server.mjs
     startCommand: node --max-old-space-size=256 molyvi-growth/hosted-customer-server.mjs
     healthCheckPath: /healthz
     disk:
