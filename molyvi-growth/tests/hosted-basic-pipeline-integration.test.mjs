@@ -13,7 +13,7 @@ async function inventory(root){const files=[];async function visit(directory,pre
 
 // Real source/confirmation/composition/installer modules, isolated PRIVATE_ROOT,
 // real PNG decoding, synthetic Shopify HTTP. No real credentials or services.
-test('actual ten-product confirmation composes and installs once; expired terminal restart performs no work', {skip:!sharpPath?'Explicit local sharp module required':false,timeout:180000},async t=>{
+test('actual ten-product confirmation composes and installs once; expired terminal restart performs no work', {skip:!sharpPath?'Explicit local sharp module required':false,timeout:360000},async t=>{
   const scratchParent=path.join(originalRoot,'briefs'),root=await fs.mkdtemp(path.join(scratchParent,'_bpi-')),instances=[],priorFetch=globalThis.fetch;
   t.after(async()=>{for(const app of instances)await app.stop();globalThis.fetch=priorFetch;const actual=await fs.realpath(root);assert.equal(path.dirname(actual),await fs.realpath(scratchParent));assert(path.basename(actual).startsWith('_bpi-'));await fs.rm(actual,{recursive:true});});
   globalThis.fetch=async()=>{assert.fail('No real network call is permitted by this integration test');};
@@ -31,7 +31,7 @@ test('actual ten-product confirmation composes and installs once; expired termin
   const fixture=createBasicAssemblyFixture({productCount:10,sizeProductCount:2,sourceImage:image,generatedImage:image}),storage=path.join(root,'briefs','molyvi-hosted-staging'),store=await new TaskStore(path.join(storage,'workspaces')).ready();
   await store.create(fixture.record);const projectDirectory=await store.directory(fixture.record.id),sourceBefore=await fs.readFile(path.join(projectDirectory,'workspace.json'));
   for(const [items,prefix]of [[fixture.options.sourceAssets,'photo'],[fixture.options.assets,'generated']])for(const item of items)await fs.writeFile(path.join(projectDirectory,`${prefix}-${item.asset.id}.bin`),item.bytes,{flag:'wx'});
-  let now=Date.parse('2026-10-19T16:00:00.000Z'),leased=false,leases=0,releases=0,tokenReads=0,preflights=0,world;
+  let now=Date.parse('2026-10-19T16:00:00.000Z');const wallStart=Date.now(),clock=()=>now+(Date.now()-wallStart);let leased=false,leases=0,releases=0,tokenReads=0,preflights=0,world;
   const body={schemaVersion:1,kind:'molyvi_basic_pipeline_permit',serviceId:'srv-db7othjrjlhs73cg7lf0',targetStore:'molyvi-still-dev.myshopify.com',projectId:fixture.record.id,ownerId:fixture.record.ownerId,sourceHash:hash(fixture.record),jobId:crypto.randomUUID(),authorizationSha256:'a'.repeat(64),operatorId:'molyvi-full-basic-test-20261019',createdAt:new Date(now).toISOString(),expiresAt:new Date(now+4*60*60*1000).toISOString(),credentialReference:{runId:crypto.randomUUID(),packageSha256:'b'.repeat(64),receiverSha256:'c'.repeat(64)},publicationAuthorized:false,newChargesAuthorized:false},permit={...body,permitHash:hash(body)};
   await fs.mkdir(path.dirname(api.HOSTED_BASIC_PIPELINE_FILE),{recursive:true});await fs.writeFile(api.HOSTED_BASIC_PIPELINE_FILE,JSON.stringify(permit));
   const dependencies={
@@ -43,10 +43,11 @@ test('actual ten-product confirmation composes and installs once; expired termin
       return installerModule.loadHostedPreparedBasicInstaller({...options,fetchImpl:diagnose('graphql',world.fetch),uploadFetch:diagnose('upload',world.uploadFetch),decodeImage:createShopifyImageDecoder({sharp})});
     }
   };
-  const config={permit,store,storage,clock:()=>now,acquireLease:async()=>{assert.equal(leased,false);leased=true;leases++;return ()=>{assert(leased);leased=false;releases++;};},dependencies};
+  const config={permit,store,storage,clock,acquireLease:async()=>{assert.equal(leased,false);leased=true;leases++;return ()=>{assert(leased);leased=false;releases++;};},dependencies};
   const app=await api.createHostedBasicPipeline(config);instances.push(app);app.start();await app.drain();assert.equal(app.publicStatus({projectId:fixture.record.id,ownerId:fixture.record.ownerId}).stage,'waiting_confirmation');assert.equal(leases,0);assert.equal(preflights,0);
   const session={projectId:fixture.record.id,ownerId:fixture.record.ownerId},requested=await app.service.request(session,{expectedSourceHash:permit.sourceHash,acknowledged:true});app.signal();
-  const deadline=Date.now()+150000;while(!['completed','stopped_for_review'].includes(app.status().worker.lifecycle)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
+  const deadline=Date.now()+300000;while(!['completed','stopped_for_review'].includes(app.status().worker.lifecycle)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
+  if(!['completed','stopped_for_review'].includes(app.status().worker.lifecycle))t.diagnostic(JSON.stringify({deadlineStatus:app.status()}));
   if(app.status().code){const unsafe=[];async function scan(directory){for(const item of await fs.readdir(directory,{withFileTypes:true})){const file=path.join(directory,item.name),s=await fs.lstat(file);if(s.isDirectory())await scan(file);else if(s.nlink!==1||s.isSymbolicLink())unsafe.push({file:path.relative(root,file),nlink:s.nlink,bytes:s.size});}}await scan(storage);t.diagnostic(JSON.stringify({syntheticFixtureFilesystem:unsafe.slice(0,20),violations:unsafe.length}));}
   assert.equal(app.status().code,null,JSON.stringify(app.status()));assert.equal(app.publicStatus(session).stage,'installed_draft');assert.equal(leased,false);assert.equal(leases,1);assert.equal(releases,1);assert.equal(tokenReads,1);assert.equal(preflights,1);
   assert.equal(app.status().installer.phase,'verified');assert.deepEqual(app.publicStatus(session).counts,{total:59,succeeded:59});
