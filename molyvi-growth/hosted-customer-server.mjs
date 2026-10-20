@@ -22,6 +22,7 @@ import {loadHostedBasicInstallerActivation} from './lib/hosted-basic-installer-a
 import {loadHostedBasicPipelinePermit,createHostedBasicPipeline} from './lib/hosted-basic-pipeline.mjs';
 import {createHeavyWorkCoordinator} from './lib/heavy-work-coordinator.mjs';
 import {loadHostedMemoryProbe,runHostedMemoryProbe} from './operations/r2-backup/hosted-memory-probe.mjs';
+import {loadHostedGenerationProbe,runHostedGenerationProbe} from './operations/r2-backup/hosted-generation-probe.mjs';
 import {runCanonicalMigrationStartup} from './operations/canonical-migration-startup.mjs';
 
 export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller=null,basicPipelinePermit=null,deferBackgroundStart=false}={}){
@@ -168,7 +169,11 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   const storage=process.env.MOLYVI_PRIVATE_STORAGE??path.join(PRIVATE_ROOT,'molyvi-hosted-staging');let transport;
   await runCanonicalMigrationStartup({source:storage,controlRoot:'/opt/render/project/src/briefs/molyvi-canonical-migration-20261020-r1',release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
   const probeRoot='/opt/render/project/src/briefs/molyvi-r2-memory-probe-20261020-r1';
-  const probeConfig=await loadHostedMemoryProbe({permitFile:path.join(probeRoot,'permit.json'),source:storage,probeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
+  const legacyProbeConfig=await loadHostedMemoryProbe({permitFile:path.join(probeRoot,'permit.json'),source:storage,probeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
+  const generationProbeRoot='/opt/render/project/src/briefs/molyvi-generation-memory-probe-20261020-r1';
+  const generationProbeConfig=await loadHostedGenerationProbe({permitFile:path.join(generationProbeRoot,'permit.json'),source:storage,probeRoot:generationProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
+  if(legacyProbeConfig&&generationProbeConfig)throw Error('HOSTED_MULTIPLE_PROBES_FORBIDDEN');
+  const probeConfig=generationProbeConfig??legacyProbeConfig;
   if(process.env.MOLYVI_REAL_EMAIL_ENABLED==='true'){
     if(process.env.MOLYVI_GMAIL_ACCOUNT_VERIFIED!=='true')throw Error('GMAIL_ACCOUNT_VERIFICATION_REQUIRED');
     const getAccessToken=createGoogleMailTokenProvider({clientId:process.env.MOLYVI_GOOGLE_CLIENT_ID,clientSecret:process.env.MOLYVI_GOOGLE_CLIENT_SECRET,refreshToken:process.env.MOLYVI_GOOGLE_REFRESH_TOKEN});
@@ -196,7 +201,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     if(probeConfig){await app.stop();throw Error('HOSTED_MEMORY_PROBE_AUTOMATIC_SETUP_FAILED');}
     await reportBackupStartupFailure(transport);
   }
-  const startup=createHostedStartupLifecycle({app,backups,probeConfig,onBlocked:code=>console.error(code)});
+  const startup=createHostedStartupLifecycle({app,backups,probeConfig,runProbe:generationProbeConfig?runHostedGenerationProbe:runHostedMemoryProbe,onBlocked:code=>console.error(code)});
   const shutdown=()=>{void startup.stop().then(()=>process.exit(0),()=>{console.error('MOLYVI_HOSTED_SHUTDOWN_FAILED');process.exit(1);});};
   process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);
   if(probeConfig)app.server.prependOnceListener('listening',()=>{void startup.start();});

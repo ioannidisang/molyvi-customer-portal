@@ -17,6 +17,14 @@ export class R2Budget{
     await fs.chmod(this.file,0o600);return this;
   }
   summary(){return this.db.prepare('SELECT COALESCE(sum(requests),0) requests,COALESCE(sum(upload_bytes),0) uploadBytes,COALESCE(sum(download_bytes),0) downloadBytes FROM reservations WHERE at>?').get(this.now()-R2_LIMITS.windowDays*86_400_000);}
+  // Read-only accounting for the generation runner. Failed/unknown calls are
+  // never refunded or reset. last_insert_rowid is specific to this connection.
+  entries(){return this.db.prepare('SELECT id,at,requests,upload_bytes AS uploadBytes,download_bytes AS downloadBytes FROM reservations WHERE at>? ORDER BY id').all(this.now()-R2_LIMITS.windowDays*86_400_000).map(row=>Object.freeze({...row}));}
+  reserveRecorded(value){
+    this.reserve(value);
+    const row=this.db.prepare('SELECT id,at,requests,upload_bytes AS uploadBytes,download_bytes AS downloadBytes FROM reservations WHERE id=last_insert_rowid()').get();
+    assert(row,'R2_BUDGET_RECEIPT_REQUIRED');return Object.freeze({...row});
+  }
   reserve({requests=0,uploadBytes=0,downloadBytes=0}={}){
     for(const value of [requests,uploadBytes,downloadBytes])assert(Number.isSafeInteger(value)&&value>=0,'R2_BUDGET_INPUT');assert(requests+uploadBytes+downloadBytes>0,'R2_BUDGET_INPUT');
     this.db.exec('BEGIN IMMEDIATE');try{
