@@ -7,6 +7,7 @@ import {R2Budget} from './r2-budget.mjs';
 import {createR2Transport,r2Options} from './r2-transport.mjs';
 import {BackupScheduler} from './scheduler.mjs';
 import {RetentionCatalog,RETENTION_POLICY,seedVerifiedLegacy,rotateVerifiedBackups} from './retention.mjs';
+import {createReferenceBackupRun,AUTOMATIC_REFERENCE_POLICY} from './automatic-run.mjs';
 const BASE='/opt/render/project/src/briefs',CONTROL=BASE+'/molyvi-r2-access';
 const SOURCE=BASE+'/molyvi-hosted-staging',ROOT=BASE+'/molyvi-r2-automatic';
 const KEY=BASE+'/molyvi-r2-recovery/20261015-r1/recovery-key.bin';
@@ -21,11 +22,29 @@ async function privatePath(file){
   let current=path.parse(file).root;
   for(const bit of file.slice(current.length).split(path.sep).filter(Boolean)){current=path.join(current,bit);assert(!(await fs.lstat(current)).isSymbolicLink(),'BACKUP_PRIVATE_PATH_SYMLINK');}
 }
-export async function createAutomaticBackups({storage,release,quietSnapshot,transport}){
+export function validateReferenceBackupActivation(value){
+  assert(value&&Object.keys(value).sort().join(',')==='enabled,format,schemaVersion,selection'&&value.enabled===true&&
+    Object.entries(AUTOMATIC_REFERENCE_POLICY).every(([k,v])=>value[k]===v),'BACKUP_REFERENCE_ACTIVATION_INVALID');
+  return Object.freeze({...value});
+}
+async function referenceActivation(){
+  const file=CONTROL+'/reference-format.json';
+  try{
+    await privatePath(file);const stat=await fs.lstat(file);
+    assert(stat.isFile()&&stat.nlink===1&&stat.size<=4096,'BACKUP_REFERENCE_ACTIVATION_INVALID');
+    return validateReferenceBackupActivation(JSON.parse(await fs.readFile(file,'utf8')));
+  }catch(e){if(e.code==='ENOENT')return null;throw e;}
+}
+export async function createAutomaticBackups({storage,release,withBackupResources,quietSnapshot,transport}){
   const configFile=CONTROL+'/automatic.json';
   let config;try{await privatePath(configFile);config=JSON.parse(await fs.readFile(configFile,'utf8'));}catch(e){if(e.code==='ENOENT')return null;throw e;}
   assert(process.env.RENDER_SERVICE_ID==='srv-db7othjrjlhs73cg7lf0'&&path.resolve(storage)===SOURCE&&/^[a-f0-9]{40}$/.test(release),'BACKUP_SERVICE_SCOPE_REQUIRED');
   assert(Object.keys(config).sort().join(',')==='enabled,firstAt,notifyOwner'&&config.enabled===true&&typeof config.notifyOwner==='boolean','BACKUP_ACTIVATION_REQUIRED');
+  assert(typeof withBackupResources==='function'&&typeof quietSnapshot==='function','BACKUP_RESOURCE_COORDINATION_REQUIRED');
+  // Missing format opt-in preserves V1 encoding, schedule and limits.
+  // Both formats now hold the application's full-phase production exclusion.
+  // Malformed/present opt-in fails closed; it never silently falls back.
+  const reference=await referenceActivation();
   await privatePath(KEY);assert(hash(await fs.readFile(KEY))===KEY_HASH,'BACKUP_INDEPENDENT_KEY_MISMATCH');
   await privatePath(CONTROL+'/r2-config.json');const access=JSON.parse(await fs.readFile(CONTROL+'/r2-config.json','utf8'));r2Options(access);
   assert(access.accountId==='59923a6c35aa9cd4f5be4c09e726f0df','BACKUP_ACCOUNT_SCOPE_REQUIRED');
@@ -42,7 +61,7 @@ export async function createAutomaticBackups({storage,release,quietSnapshot,tran
   const r2=await createR2Transport(access,{sdk,budget});
   const scheduler=await new BackupScheduler({file:ROOT+'/schedule.sqlite',firstAt:Date.parse(config.firstAt),
     notify:config.notifyOwner&&transport?({messageId,code})=>transport.send({messageId,payload:{to:'aioannidis@kooqie.com',kind:'backup_alert',subject:'Molyvi · Χρειάζεται έλεγχος αντιγράφων ασφαλείας',text:'Η αυτόματη δημιουργία αντιγράφων ασφαλείας σταμάτησε με ασφάλεια.\nΈνδειξη: '+code+'\nΤα όρια κόστους δεν αυξήθηκαν.\nΑπαιτείται έλεγχος πριν από νέα προσπάθεια.'}}):null,
-    perform:async runId=>{
+    perform:reference?createReferenceBackupRun({source:SOURCE,root:ROOT,keyFile:KEY,keyHash:KEY_HASH,release,withBackupResources,quietSnapshot,r2,budget,catalog,seedLegacy:true}):runId=>withBackupResources(async()=>{
       const dir=ROOT+'/'+runId;assert(/^auto-[0-9]{14}-[a-f0-9]{8}$/.test(runId),'BACKUP_RUN_ID');
       if(catalog)await seedVerifiedLegacy(catalog,r2);
       // Local disk guard, before copying. No resize or paid resource is created.
@@ -70,7 +89,7 @@ export async function createAutomaticBackups({storage,release,quietSnapshot,tran
         for(const name of ['service-backup.mlvb','downloaded.mlvb'])await fs.unlink(path.join(dir,name));
         return result;
       }finally{key?.fill(0);}
-    }
+    })
   }).ready();
   const stop=scheduler.stop.bind(scheduler);scheduler.stop=async()=>{await stop();r2.close();budget.close();catalog?.close();};return scheduler;
 }

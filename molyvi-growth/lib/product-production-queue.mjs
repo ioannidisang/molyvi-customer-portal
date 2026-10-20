@@ -69,7 +69,7 @@ export function createProductProductionQueue({store, provider, enabled = false, 
       ||lifetimeAttemptLimit!==null&&(!Number.isSafeInteger(lifetimeAttemptLimit)||lifetimeAttemptLimit<1||lifetimeAttemptLimit>5||requestIds===null)) fail('INVALID_PRODUCTION_QUEUE_CONFIG');
   const produce = typeof provider === 'function' ? provider : provider?.produce?.bind(provider);
   const key = path.resolve(store.storage), owner = Symbol('product-production'), lockToken = crypto.randomUUID(), lockDirectory = path.join(key, '.product-production-worker.lock');
-  let lockHeld = false, releasing, initialized = false, initializing, inflight, timer, stopped = false, suspended=false, controller, outstanding = false, lastError = null;
+  let lockHeld = false, releasing, initialized = false, initializing, inflight, timer, stopped = false, suspensions=0, controller, outstanding = false, providerPending, lastError = null;
   const scopedJobs=record=>jobs(record).filter(job=>requestIds===null||requestIds.includes(job.requestId));
   const date = () => stamp(now());
   async function acquireLock() {
@@ -145,7 +145,7 @@ export function createProductProductionQueue({store, provider, enabled = false, 
   async function one() {
     if (stopped || !enabled || !produce || outstanding) return {processed: false, reason: stopped ? 'stopped' : outstanding ? 'provider_busy' : 'provider_unavailable'};
     await initialize();
-    if (stopped) return {processed: false, reason: 'stopped'};
+    if (stopped || suspensions) return {processed: false, reason: stopped ? 'stopped' : 'suspended'};
     const all = await projects(), current = date();
     const attempts = all.reduce((sum, {record}) => sum + jobs(record).filter(job => job.attemptStartedAt?.slice(0, 10) === current.slice(0, 10)).length, 0);
     for (const {session, record} of all) {
@@ -186,8 +186,8 @@ export function createProductProductionQueue({store, provider, enabled = false, 
         signal.addEventListener('abort', abortListener, {once: true}); timeout = setTimeout(() => controller?.abort('timeout'), timeoutMs);
       });
       outstanding = true;
-      const execution = Promise.resolve().then(() => produce({packet, runId: active.runId, signal}));
-      const releaseProvider = () => {outstanding = false; if (stopped && !inflight) void releaseLock().catch(error => {lastError = error.code ?? 'PRODUCTION_LOCK_ERROR';});};
+      const execution = providerPending = Promise.resolve().then(() => produce({packet, runId: active.runId, signal}));
+      const releaseProvider = () => {outstanding = false; providerPending = null;};
       execution.then(releaseProvider, releaseProvider);
       try {
         const output = await Promise.race([execution, interrupted]);
@@ -205,10 +205,16 @@ export function createProductProductionQueue({store, provider, enabled = false, 
     return {processed: false, reason: 'idle'};
   }
   function tick() {
-    if(suspended)return Promise.resolve({processed:false,reason:'suspended'});
+    if(suspensions)return Promise.resolve({processed:false,reason:'suspended'});
     if (inflight) return inflight;
     inflight = one().then(result => {lastError = null; return result;}).catch(error => {lastError = error.code ?? 'PRODUCTION_QUEUE_ERROR'; throw error;}).finally(() => {inflight = null;});
     return inflight;
+  }
+  async function waitForIdle() {
+    while(initializing||inflight||providerPending)await Promise.allSettled([initializing,inflight,providerPending].filter(Boolean));
+  }
+  async function waitForCurrentWork() {
+    if(!initializing&&inflight)await Promise.allSettled([inflight]);
   }
   return {
     async start() {
@@ -218,12 +224,14 @@ export function createProductProductionQueue({store, provider, enabled = false, 
       void tick().catch(() => {}); return this.status();
     },
     tick,
-    suspend(){suspended=true;return ()=>{suspended=false;};},
+    suspend(){suspensions++;let released=false;return ()=>{if(!released){released=true;suspensions--;}};},
+    waitForIdle,
+    waitForCurrentWork,
     async drain({maxPasses = dailyAttemptLimit} = {}) {
       if (!Number.isSafeInteger(maxPasses) || maxPasses < 1 || maxPasses > 1000) fail('INVALID_PRODUCTION_QUEUE_CONFIG');
       const results = []; for (let i = 0; i < maxPasses; i++) {const result = await tick(); results.push(result); if (!result.processed) break;} return results;
     },
-    async stop() {stopped = true; clearInterval(timer); timer = null; controller?.abort('stopped'); if (inflight) await inflight.catch(() => {}); if (initializing) await initializing.catch(() => {}); if (!outstanding) await releaseLock();},
-    status() {return {enabled: Boolean(enabled && produce), initialized, running: Boolean(inflight || outstanding), stopped, lastError};},
+    async stop() {stopped = true; clearInterval(timer); timer = null; controller?.abort('stopped'); await waitForIdle(); if (!outstanding) await releaseLock();},
+    status() {return {enabled: Boolean(enabled && produce), initialized, initializing:Boolean(initializing), running: Boolean(initializing || inflight || outstanding), outstanding:Boolean(outstanding), suspended:suspensions>0, stopped, lastError};},
   };
 }

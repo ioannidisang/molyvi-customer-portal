@@ -79,15 +79,15 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     });
     return visible;
   };
-  let closing=false,activeArchives=0,backupPaused=false,preparationPaused=false;
+  let closing=false,activeArchives=0,activeHandlers=0,backupPaused=false,preparationPaused=false,heavyPaused=false,startupSettled=true,startupFailure=null,startup=Promise.resolve();
   const requestSlots=new RequestSlots();
-  const signalPhotoQueue=()=>{if(!closing)void photoQueue.tick().catch(()=>{/* Persisted queue state retains evidence and bounded recovery. */});};
-  const signalProductQueue=()=>{if(!closing)void productQueue.tick().catch(()=>{/* Persisted attempts prevent blind retries. */});};
+  const signalPhotoQueue=()=>{if(!closing&&!heavyPaused)void photoQueue.tick().catch(()=>{/* Persisted queue state retains evidence and bounded recovery. */});};
+  const signalProductQueue=()=>{if(!closing&&!heavyPaused)void productQueue.tick().catch(()=>{/* Persisted attempts prevent blind retries. */});};
   const pump=session=>{
-    if(closing || preparationPaused || backupPaused || pumps.has(session.projectId))return;
+    if(closing || preparationPaused || backupPaused || heavyPaused || pumps.has(session.projectId))return;
     if(serviceProvider||hostedControlledPro)void serviceQueue.tick();
     const running=(async()=>{
-      while(!closing&&!preparationPaused&&!backupPaused) {
+      while(!closing&&!preparationPaused&&!backupPaused&&!heavyPaused) {
         const {result:job}=await store.transact(session.projectId,session.ownerId,record=>record.order.paymentMode==='local_simulation'?claimJob(record):null);
         if(!job)return;
         await new Promise(resolve=>setTimeout(resolve,workerDelayMs));
@@ -99,11 +99,22 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     pumps.set(session.projectId,running);
   };
   const server=http.createServer(async(req,res)=>{
-    if(preparationPaused){
-      let pathname;try{pathname=new URL(req.url,'http://molyvi.invalid').pathname;}catch{return json(res,400,{error:'INVALID_REQUEST'});}
-      if(!['GET','HEAD'].includes(req.method)||pathname.startsWith('/customer-files/')||pathname.startsWith('/operator-revision-files/')||pathname.startsWith('/api/operator/adjustment-preview'))return json(res,503,{error:'PREPARATION_IN_PROGRESS'},{'Retry-After':'5'});
-    }
-    if(backupPaused&&req.url!=='/healthz')return json(res,503,{error:'BACKUP_SNAPSHOT_IN_PROGRESS'},{'Retry-After':'15'});
+    let counted=false;
+    try{
+    const port=server.address()?.port,{origin,client,health}=boundary.inspect(req,port),url=new URL(req.url,origin);
+    if(boundary.hosted){res.setHeader('Strict-Transport-Security','max-age=31536000');res.setHeader('Referrer-Policy','no-referrer');}
+    // Health is synchronous, performs no production work and never enters the
+    // drain counter. Its ordinary host/target validation still applies.
+    if(health){customerAccess.accounts.db.prepare('SELECT 1').get();return json(res,200,req.method==='HEAD'?undefined:{status:'ok'});}
+    const rejectPaused=()=>{
+      if(closing||heavyPaused||backupPaused){json(res,503,{error:backupPaused?'BACKUP_SNAPSHOT_IN_PROGRESS':'BACKUP_RESOURCES_IN_PROGRESS'},{'Retry-After':'15'});return true;}
+      if(preparationPaused&&(!['GET','HEAD'].includes(req.method)||url.pathname.startsWith('/customer-files/')||url.pathname.startsWith('/operator-revision-files/')||url.pathname.startsWith('/api/operator/adjustment-preview'))){json(res,503,{error:'PREPARATION_IN_PROGRESS'},{'Retry-After':'5'});return true;}
+      return false;
+    };
+    if(rejectPaused())return;
+    // Lifetime of the asynchronous handler, independent of a disconnected
+    // response or an already released concurrency slot.
+    activeHandlers++;counted=true;
     if(boundary.hosted){
       const controller=new AbortController(),abort=()=>controller.abort();res.once('close',abort);
       let release;
@@ -111,10 +122,8 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
       catch{res.off('close',abort);if(res.destroyed)return;res.setHeader('Connection','close');res.setHeader('Retry-After','5');return json(res,429,{error:'SERVER_BUSY'});}
       if(res.destroyed){release();return;}res.off('close',abort);res.once('finish',release);res.once('close',release);
     }
-    try {
-      const port=server.address()?.port,{origin,client,health}=boundary.inspect(req,port),url=new URL(req.url,origin);
-      if(boundary.hosted){res.setHeader('Strict-Transport-Security','max-age=31536000');res.setHeader('Referrer-Policy','no-referrer');}
-      if(health){customerAccess.accounts.db.prepare('SELECT 1').get();return json(res,200,req.method==='HEAD'?undefined:{status:'ok'});}
+      // A gallery request may have waited for a slot while exclusion began.
+      if(rejectPaused())return;
       // Server-to-server delivery uses HMAC, not a browser session or Origin.
       if(url.pathname==='/webhooks/shopify/orders-paid'&&req.method==='POST'){
         if(!paymentReceiver)throw new IntakeError('PAYMENT_ADAPTER_UNAVAILABLE',503);
@@ -404,28 +413,47 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
         'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'"});
       res.end(req.method==='HEAD'?undefined:data);
     }catch(error) {if(!res.headersSent)json(res,error instanceof IntakeError?error.status:500,{error:error instanceof IntakeError?error.code:'INTERNAL_ERROR',field:error.details?.field});else res.destroy();}
+    finally{if(counted)activeHandlers--;}
   });
   server.requestTimeout=10_000;server.headersTimeout=10_000;
   if(boundary.hosted){server.maxConnections=32;server.maxHeadersCount=50;server.setTimeout(30_000,socket=>socket.destroy());}
-  server.on('listening',()=>{void photoQueue.start().catch(()=>{/* No unaudited provider fallback after a startup failure. */});});
-  server.on('listening',()=>{void productQueue.start().catch(()=>{/* No paid API fallback. */});});
-  server.on('listening',()=>{void serviceQueue.start().catch(()=>{/* Keep stored attempts; no provider fallback. */});});
+  server.on('listening',()=>{
+    startupSettled=false;
+    startup=Promise.allSettled([photoQueue.start(),productQueue.start(),serviceQueue.start()]).then(results=>{
+      startupFailure=results.find(result=>result.status==='rejected')?.reason??null;startupSettled=true;
+    });
+  });
   server.on('close',()=>{closing=true;sessions.clear();void photoQueue.stop().catch(()=>{});void productQueue.stop().catch(()=>{});void serviceQueue.stop().catch(()=>{});});
+  const suspendQueues=()=>{const releases=[photoQueue.suspend(),productQueue.suspend(),serviceQueue.suspend()];let released=false;return ()=>{if(released)return;released=true;for(const release of releases)release();};};
+  const waitIdle=async code=>{
+    const end=Date.now()+30_000;
+    while(!startupSettled||activeHandlers||activeArchives||pumps.size||photoQueue.status().running||productQueue.status().running||serviceQueue.status().active){
+      if(Date.now()>end)throw Error(code);await new Promise(r=>setTimeout(r,25));
+    }
+    if(startupFailure)throw Error('WORKER_STARTUP_DRAIN_FAILED');
+  };
   server.pauseForPreparation=async()=>{
     if(!boundary.hosted||preparationPaused||backupPaused||closing)throw Error('PREPARATION_DRAIN_UNAVAILABLE');
-    preparationPaused=true;const end=Date.now()+30_000,resume=serviceQueue.suspend(),resumeProducts=productQueue.suspend();
-    try{while(requestSlots.active||pumps.size||serviceQueue.status().active||productQueue.status().running){if(Date.now()>end)throw Error('PREPARATION_DRAIN_TIMEOUT');await new Promise(r=>setTimeout(r,25));}}
-    catch(e){resume();resumeProducts();preparationPaused=false;throw e;}
-    let released=false;return ()=>{if(released)return;released=true;resume();resumeProducts();preparationPaused=false;};
+    preparationPaused=true;const resume=suspendQueues();
+    try{await waitIdle('PREPARATION_DRAIN_TIMEOUT');}
+    catch(e){resume();preparationPaused=false;throw e;}
+    let released=false;return ()=>{if(released)return;released=true;resume();preparationPaused=false;};
+  };
+  server.pauseHeavyResources=()=>{
+    if(!boundary.hosted||heavyPaused||closing)throw Error('BACKUP_RESOURCE_DRAIN_UNAVAILABLE');
+    heavyPaused=true;const release=suspendQueues();let released=false;
+    return {waitOwned:async()=>{await Promise.all([photoQueue.waitForCurrentWork(),productQueue.waitForCurrentWork(),serviceQueue.waitForCurrentWork(),...pumps.values()]);},
+      drain:()=>waitIdle('BACKUP_RESOURCE_DRAIN_TIMEOUT'),resume:()=>{if(released||closing)return;released=true;release();heavyPaused=false;}};
   };
   server.pauseForBackup=async()=>{
     if(!boundary.hosted||backupPaused||closing)throw Error('BACKUP_DRAIN_UNAVAILABLE');
-    backupPaused=true;const end=Date.now()+30_000,resume=serviceQueue.suspend(),resumeProducts=productQueue.suspend();
-    try{while(requestSlots.active||serviceQueue.status().active||productQueue.status().running){if(Date.now()>end)throw Error('BACKUP_DRAIN_TIMEOUT');await new Promise(r=>setTimeout(r,25));}}
-    catch(e){resume();resumeProducts();backupPaused=false;throw e;}
-    return ()=>{resume();resumeProducts();backupPaused=false;};
+    backupPaused=true;const resume=suspendQueues();
+    try{await waitIdle('BACKUP_DRAIN_TIMEOUT');}
+    catch(e){/* Fail closed: an uncertain drain must not reopen admission. */throw e;}
+    let released=false;return ()=>{if(released||closing)return;released=true;resume();backupPaused=false;};
   };
-  server.drainWorkers=async()=>{closing=true;await Promise.allSettled([...pumps.values(),photoQueue.stop(),productQueue.stop(),serviceQueue.stop()]);};
+  server.drainWorkers=async()=>{closing=true;await startup;await Promise.allSettled([...pumps.values(),photoQueue.stop(),productQueue.stop(),serviceQueue.stop()]);while(activeHandlers||activeArchives)await new Promise(r=>setTimeout(r,25));};
+  server.resourceStatus=()=>({heavyPaused,backupPaused,preparationPaused,activeHandlers,activeArchives,pumps:pumps.size,startupSettled,startupFailed:Boolean(startupFailure)});
   // Trusted local lifecycle handle; this is never exposed through HTTP.
   server.photoReviewQueue=photoQueue;
   server.productProductionQueue=productQueue;

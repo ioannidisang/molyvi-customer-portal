@@ -61,10 +61,12 @@ export function createServiceProductionQueue({store,provider,enabled=false,proje
     ||enabled&&(!provider||!projectIds.length)||!Number.isSafeInteger(attemptLimit)||attemptLimit<1||attemptLimit>5
     ||!Number.isSafeInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000||!Number.isSafeInteger(pollMs)||pollMs<20)fail('SERVICE_WORKER_CONFIG_INVALID');
   const lock=path.join(store.storage,'.service-production-worker.lock'),token=crypto.randomUUID();
-  let initialized=false,ownsLock=false,interval,inflight,controller,outstanding=null,stopped=false,suspended=false,lastError=null;
+  let initialized=false,initializing,ownsLock=false,interval,inflight,controller,outstanding=null,stopped=false,suspensions=0,lastError=null;
   const read=async id=>{const directory=await store.directory(id),file=path.join(directory,'workspace.json');if((await fs.lstat(file)).isSymbolicLink())fail('UNSAFE_STORAGE');const candidate=JSON.parse(await fs.readFile(file,'utf8'));return store.read(id,candidate.ownerId);};
   const initialize=async()=>{
     if(initialized)return;
+    if(initializing)return initializing;
+    initializing=(async()=>{
     try{await fs.mkdir(lock);ownsLock=true;await fs.writeFile(path.join(lock,'owner.json'),JSON.stringify({token,pid:process.pid}),{flag:'wx'});}
     catch(error){if(error.code==='EEXIST')fail('SERVICE_WORKER_LOCKED');throw error;}
     for(const id of projectIds){const record=await read(id);await store.transact(id,record.ownerId,current=>{
@@ -73,10 +75,13 @@ export function createServiceProductionQueue({store,provider,enabled=false,proje
       }
     });}
     initialized=true;
+    })().finally(()=>{initializing=null;});
+    return initializing;
   };
   const one=async()=>{
     if(!enabled||stopped||outstanding)return false;
     await initialize();
+    if(stopped||suspensions)return false;
     const records=await Promise.all(projectIds.map(read));
     const attempts=records.reduce((sum,record)=>sum+Object.values(record.jobs).filter(job=>job.providerRunId).reduce((n,job)=>n+job.attempts,0),0);
     for(const record of records){
@@ -189,14 +194,16 @@ export function createServiceProductionQueue({store,provider,enabled=false,proje
     return false;
   };
   const tick=()=>{
-    if(suspended)return Promise.resolve(false);
+    if(suspensions)return Promise.resolve(false);
     if(inflight)return inflight;
     inflight=one().catch(error=>{lastError=error.code??'SERVICE_WORKER_FAILED';return false;}).finally(()=>{inflight=null;});return inflight;
   };
-  const start=async()=>{if(!enabled||stopped)return;await initialize();if(!interval){interval=setInterval(()=>{void tick();},pollMs);interval.unref();}void tick();};
+  const waitForIdle=async()=>{while(initializing||inflight||outstanding)await Promise.allSettled([initializing,inflight,outstanding].filter(Boolean));};
+  const waitForCurrentWork=async()=>{if(!initializing&&inflight)await Promise.allSettled([inflight]);};
+  const start=async()=>{if(!enabled||stopped)return;await initialize();if(stopped)return;if(!interval){interval=setInterval(()=>{void tick();},pollMs);interval.unref();}void tick();};
   const stop=async()=>{
-    stopped=true;clearInterval(interval);controller?.abort();if(inflight)await inflight;
+    stopped=true;clearInterval(interval);controller?.abort();await waitForIdle();
     if(ownsLock&&!outstanding){const ownerFile=path.join(lock,'owner.json');const owner=JSON.parse(await fs.readFile(ownerFile,'utf8'));if(owner.token===token){await fs.unlink(ownerFile);await fs.rmdir(lock);ownsLock=false;}}
   };
-  return {start,tick,stop,suspend:()=>{suspended=true;return ()=>{suspended=false;};},drain:async()=>{for(let i=0;i<64;i++)if(!await tick())break;},status:()=>({enabled,taskIds:[...taskIds],attemptLimit,lastError,active:Boolean(inflight)})};
+  return {start,tick,stop,waitForIdle,waitForCurrentWork,suspend:()=>{suspensions++;let released=false;return ()=>{if(!released){released=true;suspensions--;}};},drain:async()=>{for(let i=0;i<64;i++)if(!await tick())break;},status:()=>({enabled,taskIds:[...taskIds],attemptLimit,lastError,initializing:Boolean(initializing),outstanding:Boolean(outstanding),suspended:suspensions>0,active:Boolean(initializing||inflight||outstanding)})};
 }

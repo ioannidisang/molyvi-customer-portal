@@ -59,7 +59,7 @@ export function createPhotoReviewQueue({store, provider, enabled = false, dailyA
   const owner = Symbol('photo-review-worker'), key = path.resolve(store.storage);
   const lockDirectory = path.join(key, '.photo-review-worker.lock'), lockToken = crypto.randomUUID();
   let lockHeld = false, releasing;
-  let initialized = false, initializing, inflight, timer, stopped = false, controller, outstanding = false, lastError = null;
+  let initialized = false, initializing, inflight, timer, stopped = false, controller, outstanding = false, providerPending, suspensions = 0, lastError = null;
   const date = () => stamp(now());
 
   async function acquireLock() {
@@ -163,7 +163,7 @@ export function createPhotoReviewQueue({store, provider, enabled = false, dailyA
   }
   async function one() {
     await initialize();
-    if (stopped || !enabled || !review || outstanding) return {processed: false, reason: stopped ? 'stopped' : outstanding ? 'provider_busy' : 'provider_unavailable'};
+    if (stopped || suspensions || !enabled || !review || outstanding) return {processed: false, reason: stopped ? 'stopped' : suspensions ? 'suspended' : outstanding ? 'provider_busy' : 'provider_unavailable'};
     const current = date(), all = await projects();
     const attemptsToday = all.reduce((total, item) => total + Object.values(item.record.photoReviewQueue?.jobs ?? {}).filter(job => job.attemptStartedAt?.slice(0, 10) === current.slice(0, 10)).length, 0);
     // Persisted successful results are replayed before consuming any fresh quota.
@@ -207,8 +207,8 @@ export function createPhotoReviewQueue({store, provider, enabled = false, dailyA
           timeout = setTimeout(() => controller?.abort('timeout'), timeoutMs);
         });
         outstanding = true;
-        const execution = Promise.resolve().then(() => review({...prepared, reviewerId: active.reviewerId, runId: active.runId, signal}));
-        const releaseProvider = () => {outstanding = false; if (stopped) void releaseLock().catch(error => {lastError = error.code ?? 'PHOTO_REVIEW_LOCK_ERROR';});};
+        const execution = providerPending = Promise.resolve().then(() => review({...prepared, reviewerId: active.reviewerId, runId: active.runId, signal}));
+        const releaseProvider = () => {outstanding = false; providerPending = null;};
         execution.then(releaseProvider, releaseProvider);
         try {
           const result = await Promise.race([execution, interrupted]);
@@ -228,9 +228,18 @@ export function createPhotoReviewQueue({store, provider, enabled = false, dailyA
   }
 
   function tick() {
+    if (suspensions) return Promise.resolve({processed:false,reason:'suspended'});
     if (inflight) return inflight;
     inflight = one().then(result => {lastError = null; return result;}).catch(error => {lastError = error.code ?? 'PHOTO_REVIEW_QUEUE_ERROR'; throw error;}).finally(() => {inflight = null;});
     return inflight;
+  }
+  async function waitForIdle() {
+    while(initializing||inflight||providerPending)await Promise.allSettled([initializing,inflight,providerPending].filter(Boolean));
+  }
+  async function waitForCurrentWork() {
+    // Initialization has no provider deadline: leave it to the bounded residual
+    // drain. A suspension recheck after initialize prevents a late dispatch.
+    if(!initializing&&inflight)await Promise.allSettled([inflight]);
   }
   return {
     async start() {
@@ -244,6 +253,9 @@ export function createPhotoReviewQueue({store, provider, enabled = false, dailyA
       return this.status();
     },
     tick,
+    suspend(){suspensions++;let released=false;return ()=>{if(!released){released=true;suspensions--;}};},
+    waitForIdle,
+    waitForCurrentWork,
     async drain({maxPasses = dailyAttemptLimit} = {}) {
       if (!Number.isSafeInteger(maxPasses) || maxPasses < 1 || maxPasses > 1000) fail('INVALID_REVIEW_QUEUE_CONFIG');
       const results = [];
@@ -252,12 +264,11 @@ export function createPhotoReviewQueue({store, provider, enabled = false, dailyA
     },
     async stop() {
       stopped = true; clearInterval(timer); timer = null; controller?.abort('stopped');
-      if (inflight) await inflight.catch(() => {});
-      if (initializing) await initializing.catch(() => {});
+      await waitForIdle();
       // Do not let another local worker overlap an adapter that ignored abort.
       // Its unresolved invocation still owns the single provider slot.
       if (!outstanding) await releaseLock();
     },
-    status() {return {enabled: Boolean(enabled && review), initialized, running: Boolean(inflight || outstanding), stopped, lastError};},
+    status() {return {enabled: Boolean(enabled && review), initialized, initializing:Boolean(initializing), running: Boolean(initializing || inflight || outstanding), outstanding:Boolean(outstanding), suspended:suspensions>0, stopped, lastError};},
   };
 }
