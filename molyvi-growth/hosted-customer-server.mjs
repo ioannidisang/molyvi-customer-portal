@@ -22,6 +22,7 @@ import {loadHostedBasicInstallerActivation} from './lib/hosted-basic-installer-a
 import {loadHostedBasicPipelinePermit,createHostedBasicPipeline} from './lib/hosted-basic-pipeline.mjs';
 import {createHeavyWorkCoordinator} from './lib/heavy-work-coordinator.mjs';
 import {loadHostedMemoryProbe,runHostedMemoryProbe} from './operations/r2-backup/hosted-memory-probe.mjs';
+import {runCanonicalMigrationStartup} from './operations/canonical-migration-startup.mjs';
 
 export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller=null,basicPipelinePermit=null,deferBackgroundStart=false}={}){
   if(typeof deferBackgroundStart!=='boolean')throw Error('HOSTED_BACKGROUND_START_CONFIG');
@@ -165,6 +166,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   for(const flag of ['MOLYVI_PAYMENT_RECEIVER_ENABLED','MOLYVI_AI_WORKERS_ENABLED','MOLYVI_BACKUP_UPLOAD_ENABLED'])if(process.env[flag]==='true')throw Error('HOSTED_STAGING_SCOPE_REQUIRED');
   const port=Number(process.env.PORT??10000);if(!Number.isInteger(port)||port<1||port>65535||[18012,18013,19099].includes(port))throw Error('INVALID_PORT');
   const storage=process.env.MOLYVI_PRIVATE_STORAGE??path.join(PRIVATE_ROOT,'molyvi-hosted-staging');let transport;
+  await runCanonicalMigrationStartup({source:storage,controlRoot:'/opt/render/project/src/briefs/molyvi-canonical-migration-20261020-r1',release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
   const probeRoot='/opt/render/project/src/briefs/molyvi-r2-memory-probe-20261020-r1';
   const probeConfig=await loadHostedMemoryProbe({permitFile:path.join(probeRoot,'permit.json'),source:storage,probeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
   if(process.env.MOLYVI_REAL_EMAIL_ENABLED==='true'){

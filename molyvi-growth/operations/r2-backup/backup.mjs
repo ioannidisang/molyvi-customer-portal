@@ -7,6 +7,7 @@ import {Readable,Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {createGzip,createGunzip} from 'node:zlib';
 import {DatabaseSync,backup} from 'node:sqlite';
+import {resolveDeliveryStorage,withDeliveryStorage} from '../../lib/delivery-storage.mjs';
 
 const MAGIC=Buffer.from('MOLYVI-BACKUP-1\n');
 const PACK=Buffer.from('MOLYVI-PACK-1\n');
@@ -115,7 +116,18 @@ export async function verifyService(root,m){
       const rel='deliveries/'+d.manifest_hash,raw=await fs.readFile(await ordinary(root,rel+'/delivery-manifest.json'));
       assert(hash(raw)===d.manifest_hash,'RESTORE_DELIVERY_MANIFEST');const delivery=JSON.parse(raw);
       assert(delivery.projectId===d.project_id,'RESTORE_DELIVERY_PROJECT');
-      for(const e of delivery.files){const a=await digest(await ordinary(root,rel+'/'+safeName(e.file)));assert(a.sha256===e.sha256&&a.bytes===e.bytes,'RESTORE_DELIVERY_FILE');if(/\.(png|jpe?g|webp)$/i.test(e.file))images++;}
+      // Storage mode is explicit and bound to the authoritative delivery/project
+      // rows. The snapshot inventory remains physical: virtual archive members
+      // are verified here, never silently added to or expanded during restore.
+      const project=db.prepare('SELECT order_id FROM projects WHERE id=?').get(d.project_id);
+      const storage=await resolveDeliveryStorage({root:path.join(root,rel),manifestRaw:raw,manifestHash:d.manifest_hash,zipHash:d.zip_hash,projectId:d.project_id,orderId:project?.order_id});
+      const verifyMembers=async archive=>{
+        for(const e of delivery.files){
+          const file=safeName(e.file),a=archive?await archive.digest(file,{bytes:e.bytes,sha256:e.sha256}):await digest(await ordinary(root,rel+'/'+file));
+          assert(a.sha256===e.sha256&&a.bytes===e.bytes,'RESTORE_DELIVERY_FILE');if(/\.(png|jpe?g|webp)$/i.test(e.file))images++;
+        }
+      };
+      if(storage)await withDeliveryStorage(storage,verifyMembers);else await verifyMembers(null);
       assert((await digest(await ordinary(root,rel+'/Molyvi-Service-Delivery.zip'))).sha256===d.zip_hash,'RESTORE_DELIVERY_ZIP');deliveries++;
     }
     const rows=db.prepare('SELECT payload FROM mail_outbox').all();

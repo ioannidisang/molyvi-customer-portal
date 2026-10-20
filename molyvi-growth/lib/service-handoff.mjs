@@ -1,3 +1,4 @@
+import {readDeliveryStoredFile,assertDeliveryStorageRoot} from './delivery-storage.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -12,7 +13,8 @@ export function safeRelative(file) {
   if(typeof file!=='string'||!file||/[\\:\x00-\x1f?#]/.test(file)||file.split('/').some(x=>!x||x==='.'||x==='..')||path.isAbsolute(file))fail('UNSAFE_HANDOFF_PATH');
   return file;
 }
-export async function ordinaryFile(root, file) {
+export async function ordinaryFile(root, file, storage) {
+  if(storage){assertDeliveryStorageRoot(storage,root);return readDeliveryStoredFile(storage,file);}
   safeRelative(file); let current=path.resolve(root);
   if((await fs.lstat(current)).isSymbolicLink())fail('HANDOFF_SYMLINK');
   for(const part of file.split('/')) { current=path.join(current,part); if((await fs.lstat(current)).isSymbolicLink())fail('HANDOFF_SYMLINK'); }
@@ -97,3 +99,4 @@ export async function createHandoffServer({directory,zipFile,port}){
   if(zipFile){const receipt=JSON.parse(await ordinaryFile(path.dirname(zipFile),'delivery-zip-receipt.json'));const bytes=await ordinaryFile(path.dirname(zipFile),path.basename(zipFile));if(sha256(bytes)!==receipt.sha256||receipt.deliveryManifestSha256!==sha256(manifestBytes))fail('HANDOFF_ZIP_CHANGED');routes.set('/Molyvi-Service-Delivery.zip',{bytes,type:types['.zip']});}
   return http.createServer((req,res)=>{if(req.headers.host!==`127.0.0.1:${port}`||!['GET','HEAD'].includes(req.method)||req.headers['sec-fetch-site']==='cross-site'){res.writeHead(403);res.end();return;} const resource=routes.get(req.url==='/'?'/index.html':req.url);res.writeHead(resource?200:404,{'Content-Type':resource?.type??'text/plain','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; img-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"});res.end(req.method==='HEAD'?undefined:resource?.bytes??'Not found');});
 }
+

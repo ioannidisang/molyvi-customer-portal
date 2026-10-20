@@ -9,6 +9,7 @@ import {FeedbackManagement} from './feedback-management.mjs';
 import {MinorAdjustments} from './minor-adjustments.mjs';
 import {DeliveryRevision} from './delivery-revision.mjs';
 import {DeliveryFinalRelease} from './delivery-final-release.mjs';
+import {resolveDeliveryStorage,withDeliveryStorage,openDeliveryStoredFile} from './delivery-storage.mjs';
 
 const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.txt':'text/plain; charset=utf-8','.md':'text/plain; charset=utf-8','.png':'image/png','.jpg':'image/jpeg','.webp':'image/webp','.pdf':'application/pdf','.zip':'application/zip'};
 const fail=(code,status=409)=>{throw new IntakeError(code,status);};
@@ -45,12 +46,20 @@ export class CustomerDelivery {
     this.notifications?.deliveryPrepared({accountId,deliveryId:delivery.id});
     return {id:delivery.id,duplicate:false};
   }
-  async manifest(delivery){const root=path.join(this.storage,delivery.manifest_hash),raw=await ordinaryFile(root,'delivery-manifest.json');if(sha256(raw)!==delivery.manifest_hash)fail('DELIVERY_FILE_CHANGED');return {root,raw,model:JSON.parse(raw)};}
-  async verify(delivery){const m=await this.manifest(delivery);for(const f of m.model.files){const b=await ordinaryFile(m.root,f.file);if(b.length!==f.bytes||sha256(b)!==f.sha256)fail('DELIVERY_FILE_CHANGED');}const zip=await ordinaryFile(m.root,'Molyvi-Service-Delivery.zip');if(sha256(zip)!==delivery.zip_hash)fail('DELIVERY_FILE_CHANGED');return true;}
+  async manifest(delivery){
+    const root=path.join(this.storage,delivery.manifest_hash),raw=await ordinaryFile(root,'delivery-manifest.json');if(sha256(raw)!==delivery.manifest_hash)fail('DELIVERY_FILE_CHANGED');
+    const model=JSON.parse(raw),project=this.accounts.db.prepare('SELECT * FROM projects WHERE id=?').get(delivery.project_id);
+    if(!project||model.projectId!==project.id||model.serviceOrderId!==project.order_id)fail('DELIVERY_IDENTITY_MISMATCH');
+    const storage=await resolveDeliveryStorage({root,manifestRaw:raw,manifestHash:delivery.manifest_hash,zipHash:delivery.zip_hash,projectId:project.id,orderId:project.order_id});
+    return {root,raw,model,storage};
+  }
+  async verify(delivery){const m=await this.manifest(delivery);
+    if(m.storage){await withDeliveryStorage(m.storage,async archive=>{for(const f of m.model.files)await archive.digest(f.file,{bytes:f.bytes,sha256:f.sha256});});return true;}
+    for(const f of m.model.files){const b=await ordinaryFile(m.root,f.file);if(b.length!==f.bytes||sha256(b)!==f.sha256)fail('DELIVERY_FILE_CHANGED');}const zip=await ordinaryFile(m.root,'Molyvi-Service-Delivery.zip');if(sha256(zip)!==delivery.zip_hash)fail('DELIVERY_FILE_CHANGED');return true;}
   async reviewStatus(session,id){
     const delivery=this.accounts.delivery(session.accountId,id),project=this.accounts.project(session.accountId,delivery.project_id),m=await this.manifest(delivery);
     const entry=m.model.files.find(f=>f.file==='catalogue.json');let catalogue=null;
-    if(entry){const b=await ordinaryFile(m.root,'catalogue.json');if(b.length!==entry.bytes||sha256(b)!==entry.sha256)fail('DELIVERY_FILE_CHANGED');catalogue=JSON.parse(b);}
+    if(entry){const b=await ordinaryFile(m.root,'catalogue.json',m.storage);if(b.length!==entry.bytes||sha256(b)!==entry.sha256)fail('DELIVERY_FILE_CHANGED');catalogue=JSON.parse(b);}
     const record=await this.workspaces.read(project.id,project.owner_id);
     return {deliveryId:id,manifestHash:delivery.manifest_hash,...deliveryReviewStatus(record,{manifest:m.model,catalogue})};
   }
@@ -87,7 +96,7 @@ export class CustomerDelivery {
     let bytes,expected=m.model.files.find(f=>f.file===relative);
     if(relative==='delivery-manifest.json')bytes=m.raw;
     else if(relative==='Molyvi-Service-Delivery.zip'){bytes=await ordinaryFile(m.root,relative);if(sha256(bytes)!==delivery.zip_hash)fail('DELIVERY_FILE_CHANGED');}
-    else if(expected){bytes=await ordinaryFile(m.root,relative);if(bytes.length!==expected.bytes||sha256(bytes)!==expected.sha256)fail('DELIVERY_FILE_CHANGED');}
+    else if(expected){bytes=await ordinaryFile(m.root,relative,m.storage);if(bytes.length!==expected.bytes||sha256(bytes)!==expected.sha256)fail('DELIVERY_FILE_CHANGED');}
     else fail('NOT_FOUND',404);
     this.accounts.audit('file_opened',session.accountId,id);
     return {bytes,type:types[path.extname(relative)]??'application/octet-stream',name:path.basename(relative)};
@@ -99,6 +108,11 @@ export class CustomerDelivery {
     const expected=relative==='delivery-manifest.json'?{sha256:delivery.manifest_hash,bytes:m.raw.length}:
       relative==='Molyvi-Service-Delivery.zip'?{sha256:delivery.zip_hash}:entry;
     if(!expected)fail('NOT_FOUND',404);
+    if(m.storage&&entry){
+      const opened=await openDeliveryStoredFile(m.storage,relative);
+      try{this.accounts.audit('file_opened',session.accountId,id);return {...opened,type:types[path.extname(relative)]??'application/octet-stream',name:path.basename(relative)};}
+      catch(error){await opened.handle.close();throw error;}
+    }
     let target=m.root;
     for(const part of ['',...relative.split('/')]){if(part)target=path.join(target,part);if((await fs.lstat(target)).isSymbolicLink())fail('DELIVERY_FILE_CHANGED');}
     const handle=await fs.open(target,constants.O_RDONLY|(constants.O_NOFOLLOW??0));
