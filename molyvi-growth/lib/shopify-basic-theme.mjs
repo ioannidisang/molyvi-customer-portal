@@ -1,3 +1,4 @@
+import {safeShopifyThemeUrl as safeUrl} from './shopify-theme-asset-url.mjs';
 import {matchesShopifyWeight} from './shopify-weight-readback.mjs';
 import crypto from 'node:crypto';
 import {createRequire} from 'node:module';
@@ -54,14 +55,6 @@ async function body(response,signal,limit){
  try{while(true){const item=await abortable(reader.read(),signal);if(item.done)break;if(!(item.value instanceof Uint8Array)||(size+=item.value.byteLength)>limit)fail('RESPONSE_TOO_LARGE');parts.push(Buffer.from(item.value));}}
  finally{try{void reader.cancel().catch(()=>{});}catch{}reader.releaseLock();}
  return Buffer.concat(parts,size);
-}
-function safeUrl(value,kind){
- let url;try{url=new URL(value);}catch{fail('UNSAFE_URL');}
- if(typeof value!=='string'||/[\x00-\x20\\]/.test(value)||url.protocol!=='https:'||url.port||url.username||url.password||url.hash)fail('UNSAFE_URL');
- const staged=url.hostname==='shopify-staged-uploads.storage.googleapis.com';
- const cdn=url.hostname==='cdn.shopify.com'&&url.pathname.startsWith('/s/files/');
- if(kind==='stage'?!staged:!cdn)fail('UNSAFE_URL');
- return url.href;
 }
 function expectedCatalog(p){return {handle:p.handle,title:p.title,descriptionHtmlSha256:sha(p.descriptionHtml),vendor:p.vendor,productType:p.type,optionNames:p.optionNames,status:'DRAFT',channels:[],currency:'EUR',inventoryLocationId:LOCATION,variants:p.variants.map(v=>({localId:v.id,sku:v.sku,optionValues:v.optionValues,priceMinor:v.priceMinor,stock:v.stock,weightGrams:v.weightGrams,visualUnitId:v.visualUnitId,imagePosition:v.imagePosition,trackInventory:true,continueSellingWhenOutOfStock:false}))};}
 function cents(value){if(typeof value!=='string'||!/^\d+(?:\.\d{1,2})?$/.test(value))fail('REMOTE_VARIANT_MISMATCH');const [whole,fraction='']=value.split('.'),minor=BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));if(minor>BigInt(Number.MAX_SAFE_INTEGER))fail('REMOTE_VARIANT_MISMATCH');return Number(minor);}

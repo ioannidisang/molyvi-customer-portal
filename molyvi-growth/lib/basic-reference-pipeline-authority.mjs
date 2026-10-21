@@ -8,7 +8,7 @@ export const REFERENCE_PIPELINE_PROJECT='4923cd43-11b7-47ed-a912-1b06458a6557';
 export const REFERENCE_PIPELINE_OWNER='a83f86bc-85dd-41cb-9f08-9db072c695b9';
 export const REFERENCE_PIPELINE_SERVICE='srv-db7othjrjlhs73cg7lf0';
 export const REFERENCE_PIPELINE_ROOT=path.join(PRIVATE_ROOT,'molyvi-hosted-staging','controlled-operations','basic-reference-1005-r2');
-export const REFERENCE_PIPELINE_PERMIT=path.join(REFERENCE_PIPELINE_ROOT,'resume-r6','permit.json');
+export const REFERENCE_PIPELINE_PERMIT=path.join(REFERENCE_PIPELINE_ROOT,'resume-r7','permit.json');
 const authorities=new WeakSet(),hash=v=>crypto.createHash('sha256').update(canonicalJson(v)).digest('hex');
 const exact=(v,k)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join(',')===k.sort().join(',');
 const hex=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
