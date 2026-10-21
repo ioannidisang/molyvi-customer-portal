@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import {PRIVATE_ROOT,canonicalJson} from './intake-store.mjs';
 import {createBasicPreparationService} from './basic-preparation.mjs';
 import {createBasicPreparationWorker} from './basic-preparation-worker.mjs';
+import {REFERENCE_PIPELINE_KIND,loadReferencePipelinePermit} from './basic-reference-pipeline-authority.mjs';
 const SERVICE='srv-db7othjrjlhs73cg7lf0',STORE='molyvi-still-dev.myshopify.com';
 export const HOSTED_BASIC_PIPELINE_FILE=path.join(PRIVATE_ROOT,'molyvi-hosted-staging','controlled-operations','basic-pipeline','permit.json');
 const runtimes=new WeakSet(),sha=b=>crypto.createHash('sha256').update(b).digest('hex'),hash=v=>sha(canonicalJson(v));
@@ -23,6 +24,7 @@ export function validateBasicPipelinePermit(value){
  const {permitHash,...body}=value;if(hash(body)!==permitHash)fail('PERMIT_HASH_MISMATCH');return structuredClone(value);
 }
 export async function loadHostedBasicPipelinePermit(){
+ const reference=await loadReferencePipelinePermit();if(reference)return reference;
  try{await fs.lstat(HOSTED_BASIC_PIPELINE_FILE);}catch(e){if(e.code==='ENOENT')return null;throw e;}
  if(process.env.RENDER_SERVICE_ID!==SERVICE)fail('SERVICE_MISMATCH');
  return validateBasicPipelinePermit(JSON.parse(await read(HOSTED_BASIC_PIPELINE_FILE)));
@@ -30,6 +32,7 @@ export async function loadHostedBasicPipelinePermit(){
 export const isHostedBasicPipeline=value=>runtimes.has(value);
 
 export async function createHostedBasicPipeline({permit,store,storage,acquireLease,clock=Date.now,dependencies={}}){
+ if(permit?.kind===REFERENCE_PIPELINE_KIND){const {createHostedBasicReferencePipeline}=await import('./hosted-basic-reference-pipeline.mjs');const runtime=await createHostedBasicReferencePipeline({permit,store,storage,acquireLease});runtimes.add(runtime);return runtime;}
  permit=validateBasicPipelinePermit(permit);
  if(path.resolve(storage)!==path.join(PRIVATE_ROOT,'molyvi-hosted-staging')||typeof acquireLease!=='function')fail('RUNTIME_SCOPE');
  const session={projectId:permit.projectId,ownerId:permit.ownerId},operations=path.join(storage,'controlled-operations'),directory=path.join(operations,'basic-pipeline'),handoffFile=path.join(directory,'handoff.json'),completionFile=path.join(directory,'completion.json');

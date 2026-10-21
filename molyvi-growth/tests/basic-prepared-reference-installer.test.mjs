@@ -10,6 +10,7 @@ import {createBasicAssemblyFixture} from './helpers/basic-assembly-fixture.mjs';
 import {createBasicPreparationService} from '../lib/basic-preparation.mjs';
 import {createShopifyImageDecoder} from '../lib/shopify-image-decoder.mjs';
 import {installPreparedBasicReference,BASIC_REFERENCE_INSTALL_LIMITS} from '../lib/basic-prepared-reference-installer.mjs';
+import {createReferenceDiskWorld} from './helpers/shopify-basic-reference-disk-world.mjs';
 const hash=v=>crypto.createHash('sha256').update(canonicalJson(v)).digest('hex');
 const sharp=createRequire(import.meta.url)('sharp');sharp.cache(false);sharp.concurrency(1);
 const decodeImage=createShopifyImageDecoder({sharp});
@@ -43,3 +44,12 @@ test('failure preserves one attempt, durable request debit and source hold; retr
   await assert.rejects(installPreparedBasicReference(f.options));assert.equal(f.counts().calls,1);assert.equal(f.counts().leases,f.counts().releases);
 });
 test('existing resource ceilings remain exact',()=>{assert.deepEqual(BASIC_REFERENCE_INSTALL_LIMITS,{graphQLRequests:700,mutations:130,stagedUploads:31,externalRequests:800,ownedBytes:8388608,elapsedMs:3600000});});
+
+test('full private bridge returns verified resource IDs and preserves a single Draft theme',async()=>{
+ const f=await fixture(),loaded=await f.options.preparation.loadPrepared(f.options.session,{requestId:f.options.confirmation.requestId});
+ const files=(await fs.readdir(f.dir)).filter(x=>x.startsWith('generated-'));const assets=await Promise.all(files.map(async name=>{const file=path.join(f.dir,name),b=await fs.readFile(file);return {file,bytes:b.length,sha256:crypto.createHash('sha256').update(b).digest('hex')};}));
+ const fake=await createReferenceDiskWorld({sharp,theme:loaded.theme,assets});let guards=0;
+ const result=await installPreparedBasicReference({...f.options,fetchImpl:fake.world.fetch,uploadFetch:fake.world.uploadFetch,assertActive:()=>{guards++;},waitForKnownTheme:true});
+ assert.equal(result.status,'verified');assert.equal(result.resources.length,14);assert.equal(result.resources.filter(r=>r.kind==='theme').length,1);assert.equal(result.resources.filter(r=>r.kind==='media').length,3);assert(result.resources.every(r=>/^[1-9][0-9]*$/.test(r.remoteId)));
+ assert.equal(fake.summary().themeRole,'UNPUBLISHED');assert(guards>0);assert.equal(f.counts().leases,f.counts().releases);await assert.rejects(installPreparedBasicReference(f.options));
+});

@@ -19,13 +19,29 @@ const fail=code=>{throw new IntakeError(`BASIC_REFERENCE_INSTALL_${code}`,422);}
 const equal=(a,b)=>canonicalJson(a)===canonicalJson(b);
 async function save(file,value){const raw=Buffer.from(JSON.stringify(value)+'\n');if(raw.length>256*1024)fail('RECORD_LIMIT');const h=await fs.open(file,'wx',0o600);try{await h.writeFile(raw);await h.sync();}finally{await h.close();}}
 
+// Continue only a known theme creation in the SAME attempt. The runner's
+// durable theme path performs readbacks, never a second themeCreate.
+export async function settleKnownReferenceTheme({result,readback,assertActive=()=>{},clock=Date.now,sleep=ms=>new Promise(r=>setTimeout(r,ms)),onWaiting=async()=>{}}){
+ const id=result.waiting?.remoteId;
+ for(let round=0;result.waiting&&round<13;round++){
+  const w=result.waiting;assertActive();
+  if(w.kind!=='shopify_theme_processing'||w.stepKey!=='theme'||!/^[1-9][0-9]*$/.test(id??'')||w.remoteId!==id||!Number.isFinite(Date.parse(w.nextCheckAt))||!Number.isFinite(Date.parse(w.deadlineAt))||clock()>=Date.parse(w.deadlineAt))fail('KNOWN_THEME_WAIT_INVALID');
+  await onWaiting(w);const delay=Math.max(0,Date.parse(w.nextCheckAt)-clock());
+  if(delay>60000)fail('KNOWN_THEME_WAIT_INVALID');if(delay)await sleep(delay);
+  assertActive();if(clock()<Date.parse(w.nextCheckAt))fail('KNOWN_THEME_EARLY_WAKE');
+  result=await readback();
+ }
+ if(result.waiting)fail('KNOWN_THEME_WAIT_LIMIT');return result;
+}
+
 /** All arguments are supplied by trusted backend code. withResources must be
  * the resident application's preparation lease, including actual asynchronous
  * transport settlement after a runner timeout. A failed/uncertain installation
  * keeps its source hold and one-attempt journal; this bridge never resumes it.
  */
 export async function installPreparedBasicReference({preparation,session,confirmation,withResources,directory,registryDirectory,
-  authorizationSha256,preflightEvidence,operatorId,accessToken,fetchImpl,uploadFetch,decodeImage,onStep=async()=>{}}={}){
+  authorizationSha256,preflightEvidence,operatorId,accessToken,fetchImpl,uploadFetch,decodeImage,onStep=async()=>{},assertActive=()=>{},waitForKnownTheme=false}={}){
+  if(typeof assertActive!=='function'||typeof waitForKnownTheme!=='boolean')fail('CONTROL_INVALID');
   if(!preparation||typeof preparation.loadPrepared!=='function'||typeof withResources!=='function'||typeof fetchImpl!=='function'||typeof uploadFetch!=='function'||typeof decodeImage!=='function'||typeof onStep!=='function')fail('PRIVATE_DEPENDENCIES_REQUIRED');
   const expected=structuredClone(confirmation),owner=structuredClone(session);
   if(!expected||expected.projectId!==owner?.projectId||expected.ownerHash!==hash(owner?.ownerId)||!/^[a-f0-9]{64}$/.test(authorizationSha256??''))fail('CONFIRMATION_REQUIRED');
@@ -54,7 +70,7 @@ export async function installPreparedBasicReference({preparation,session,confirm
     }
     async function reserve(kind){
       const task=queue.then(async()=>{
-        if(Date.now()>=deadline)fail('DEADLINE');await storage();
+        assertActive();if(Date.now()>=deadline)fail('DEADLINE');await storage();
         const next={...counters};if(kind==='query'||kind==='mutation')next.graphQLRequests++;if(kind==='mutation')next.mutations++;if(kind==='upload')next.stagedUploads++;if(kind==='upload'||kind==='download')next.externalRequests++;
         for(const key of Object.keys(next))if(next[key]>BASIC_REFERENCE_INSTALL_LIMITS[key])fail('BUDGET_EXHAUSTED');
         const body={sequence:sequence+1,previousHash:head,intentHash:state.intentHash,kind,counters:next,at:new Date().toISOString()},eventHash=hash(body);
@@ -79,11 +95,13 @@ export async function installPreparedBasicReference({preparation,session,confirm
       for(const step of state.intent.steps){
         if(Date.now()>=deadline)fail('DEADLINE');await onStep({phase:'before',key:step.key,kind:step.kind});const at=Date.now();
         result=await runner.runStep({directory:location,context,key:step.key});steps.push({key:step.key,kind:step.kind,elapsedMs:Date.now()-at});
+        if(result.waiting&&waitForKnownTheme)result=await settleKnownReferenceTheme({result,assertActive,readback:()=>runner.reconcileStep({directory:location,context,key:step.key}),onWaiting:w=>onStep({phase:'waiting',key:step.key,kind:step.kind,remoteId:w.remoteId})});
         await onStep({phase:'after',key:step.key,kind:step.kind});if(result.waiting)fail('KNOWN_THEME_WAITING');
       }
       if(result.installationStatus!=='installed_operator_attested'||Object.values(result.steps).some(s=>s.status!=='succeeded'))fail('INCOMPLETE');
       await referenceComposition.revalidate();const release=await releaseBasicInstallationSource({directory:location,context,referenceComposition});
-      const output={status:'verified',intentHash:result.intentHash,journalHead:result.head,eventCount:result.eventCount,confirmation:expected,counters,steps,sourceRelease:release,ownedBytes:await storage(),publicationAuthorized:false,newChargesAuthorized:false};
+      const resources=Object.entries(result.steps).map(([key,s])=>({key,kind:state.intent.steps.find(x=>x.key===key).kind,remoteId:s.receipt.remoteId}));
+      const output={status:'verified',intentHash:result.intentHash,journalHead:result.head,eventCount:result.eventCount,confirmation:expected,counters,steps,resources,sourceRelease:release,ownedBytes:await storage(),publicationAuthorized:false,newChargesAuthorized:false};
       await save(path.join(root,'complete.json'),output);return output;
     }finally{
       // A runner timeout does not prove that an HTTP mutation stopped. Do not
