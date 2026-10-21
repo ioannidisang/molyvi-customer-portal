@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import {createRequire} from 'node:module';
 import {canonicalJson,IntakeError} from './intake-store.mjs';
-import {verifyBasicStorePackage} from './basic-store-package.mjs';
+import {createBasicInstallationSource} from './basic-installation-source.mjs';
 import {verifyShopifyThemeProviderBody} from './shopify-theme-provider-body.mjs';
 
 const require=createRequire(new URL('../../forma-production-kit/package.json',import.meta.url)),JSZip=require('jszip');
@@ -74,14 +74,14 @@ function makeDependencies(plan){
  * Durable progress is optional; when supplied it owns cumulative budgets and
  * the definite returned ID across restarts. Network remains OFF by default.
  */
-export function createShopifyBasicThemeTransport({prepared,theme,binding,liveThemeId,accessToken,fetchImpl,uploadFetch,networkEnabled=false}={}){
- verifyBasicStorePackage(prepared);
- const plan=structuredClone(prepared.plan),pinned=structuredClone(binding),manifest=structuredClone(theme?.manifest),zipBytes=Buffer.isBuffer(theme?.zipBytes)?Buffer.from(theme.zipBytes):null;
- const uploads=prepared.uploads.map(u=>({fileName:u.fileName,sha256:sha(u.bytes),bytes:u.bytes.length}));
+export function createShopifyBasicThemeTransport({prepared,referenceComposition,theme,binding,liveThemeId,accessToken,fetchImpl,uploadFetch,networkEnabled=false}={}){
+ const installationSource=createBasicInstallationSource({prepared,referenceComposition});
+ const {plan,uploads}=installationSource,pinned=structuredClone(binding),manifest=structuredClone(theme?.manifest),zipBytes=Buffer.isBuffer(theme?.zipBytes)?Buffer.from(theme.zipBytes):null;
  if(!pinned||!equal(Object.keys(pinned).sort(),['intentHash','targetStore','projectId','ownerHash','planHash','themeZipSha256','packageBytesHash'].sort())||!isHash(pinned.intentHash)||pinned.targetStore!==SHOPIFY_BASIC_THEME_STORE||plan.targetStore!==pinned.targetStore||plan.projectId!==pinned.projectId||plan.binding.ownerHash!==pinned.ownerHash||plan.planHash!==pinned.planHash||pinned.packageBytesHash!==hash({plan,uploads})||liveThemeId!==LIVE)fail('BINDING_MISMATCH');
  if(!zipBytes||zipBytes.length>MAX_ZIP||sha(zipBytes)!==pinned.themeZipSha256||manifest?.kind!=='molyvi_basic_theme_package'||manifest.schemaVersion!==1||manifest.planHash!==plan.planHash||manifest.projectId!==plan.projectId||manifest.targetStore!==plan.targetStore||manifest.applicationAuthorized!==false||manifest.publicationAuthorized!==false||manifest.status!=='UNPUBLISHED_NOT_APPLIED'||manifest.zip?.bytes!==zipBytes.length||manifest.zip.sha256!==pinned.themeZipSha256||!Array.isArray(manifest.files))fail('THEME_MISMATCH');
  if(!equal(manifest.resources?.counts,plan.counts)||manifest.resources?.collectionHandle!==plan.namespace||!equal(manifest.resources?.pages,plan.pages.map(({documentId,handle})=>({documentId,handle}))))fail('THEME_RESOURCES_MISMATCH');
  if(typeof fetchImpl!=='function'||typeof uploadFetch!=='function'||typeof networkEnabled!=='boolean')fail('TRANSPORT_CONFIGURATION_INVALID');
+ fetchImpl=installationSource.guardFetch(fetchImpl);uploadFetch=installationSource.guardFetch(uploadFetch);
  if(typeof accessToken!=='string'||accessToken.length<16||accessToken.length>2048||!(/^[\x21-\x7e]+$/).test(accessToken))fail('CREDENTIAL_REQUIRED');
  const dependencies=makeDependencies(plan),expected={zipSha256:pinned.themeZipSha256,status:'Draft'},step={key:'theme',kind:'theme',action:'create',expected,payloadHash:hash(expected),dependsOn:dependencies.map(s=>s.key)},name=`Molyvi Basic ${plan.projectId}`;
  const attempts=new Map(),preflights=new Map();let sent=false,sourcePromise,requestCount=0,externalCount=0;
@@ -228,5 +228,5 @@ export function createShopifyBasicThemeTransport({prepared,theme,binding,liveThe
   const exactRawFiles=observedFiles.filter(f=>f.rawBodyEqualsSource).length,reviewedTransformedFiles=observedFiles.filter(f=>f.narrowProviderTransformationApplied).length,headerOnlyFiles=observedFiles.length-exactRawFiles-reviewedTransformedFiles;
   return {...base,outcome:'found',remoteId:known.remoteId.split('/').at(-1),observed:{zipSha256:pinned.themeZipSha256,status:'Draft',liveThemeIdUnchanged:LIVE},provenance:{kind:'staged_source_zip_then_definite_theme_id',sourceZipSha256:pinned.themeZipSha256,sourceZipBytes:zipBytes.length,sourceManifestHash:hash(manifest),remoteFiles:observedFiles.sort((a,b)=>a.file.localeCompare(b.file)),remoteBytes:total,verifiedStoredBytes:storedTotal,exactRawFiles,headerOnlyFiles,reviewedTransformedFiles,sourceOnlyFiles:seen.has('LICENSE.md')?[]:[{file:'LICENSE.md',sha256:originals.get('LICENSE.md').sha256,reason:'source_license_not_a_shopify_theme_directory'}],generalNormalizationAccepted:false,byteNormalizationAccepted:reviewedTransformedFiles>0,reviewedProviderTransformationApplied:reviewedTransformedFiles>0,sourceByteEqualityClaimedForAllFiles:reviewedTransformedFiles===0,rawByteEqualityClaimedForAllFiles:exactRawFiles===observedFiles.length,remoteZipEqualityClaimed:false,visualRuntimeVerified:false},observedAt:new Date().toISOString()};
  }
- return Object.freeze({supportedKinds:Object.freeze(['theme']),themeProcessing:'durable_v1',preflight,apply,readback});
+ return Object.freeze({supportedKinds:Object.freeze(['theme']),themeProcessing:'durable_v1',preflight:installationSource.guardMethod(preflight),apply:installationSource.guardMethod(apply),readback:installationSource.guardMethod(readback)});
 }

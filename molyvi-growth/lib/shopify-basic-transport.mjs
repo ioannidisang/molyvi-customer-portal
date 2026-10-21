@@ -1,4 +1,5 @@
 import {IntakeError} from './intake-store.mjs';
+import {createBasicInstallationSource} from './basic-installation-source.mjs';
 import {createShopifyBasicCatalogTransport,SHOPIFY_BASIC_CATALOG_SCOPES} from './shopify-basic-catalog.mjs';
 import {createShopifyBasicMediaTransport,SHOPIFY_BASIC_MEDIA_SCOPES} from './shopify-basic-media.mjs';
 import {createShopifyBasicRelationsTransport,SHOPIFY_BASIC_RELATIONS_SCOPES} from './shopify-basic-relations.mjs';
@@ -22,6 +23,7 @@ const fail=code=>{throw new IntakeError(`SHOPIFY_BASIC_TRANSPORT_${code}`,422);}
 export function createShopifyBasicTransport(options={}){
   if(typeof options.recordReadbackEvidence!=='function')fail('EVIDENCE_SINK_REQUIRED');
   const sink=options.recordReadbackEvidence;
+  const referenceSource=options.referenceComposition===undefined?null:createBasicInstallationSource({prepared:options.prepared,referenceComposition:options.referenceComposition});
   const adapters=[createShopifyBasicCatalogTransport(options),createShopifyBasicMediaTransport(options),createShopifyBasicRelationsTransport(options),createShopifyBasicPagesTransport(options)];
   if(options.theme!==undefined)adapters.push(createShopifyBasicThemeTransport(options));
   const routes=new Map();
@@ -33,7 +35,11 @@ export function createShopifyBasicTransport(options={}){
     async readback(request,control){
       const result=await route(request).readback(request,control);
       if(result.outcome==='found'){
+        await referenceSource?.revalidate();
         try{await sink(structuredClone(result));}catch{fail('EVIDENCE_NOT_SAVED');}
+        // A sink that runs asynchronously cannot commit a receipt for a source
+        // revoked while evidence was being persisted. Keep its claim unknown.
+        await referenceSource?.revalidate();
       }
       return result;
     }

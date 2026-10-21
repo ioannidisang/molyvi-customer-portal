@@ -3,7 +3,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {createRequire} from 'node:module';
 import {canonicalJson,IntakeError,WORKSPACE_ROOT} from './intake-store.mjs';
-import {verifyBasicStorePackage} from './basic-store-package.mjs';
+import {createBasicInstallationSource} from './basic-installation-source.mjs';
+import {describeBasicReferenceRetention} from './basic-store-package.mjs';
+import {acquireBasicSourceRetention,assertBasicSourceUnreserved,validateBasicSourceRetentionDescriptor,withBasicInstallationSourceHold,releaseBasicSourceRetention} from './basic-source-retention.mjs';
 
 const require=createRequire(new URL('../../forma-production-kit/package.json',import.meta.url)),JSZip=require('jszip');
 const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
@@ -131,6 +133,10 @@ function validateIntent(intent){
   const {intentHash,...body}=intent??{};
   if(intentHash!==hash(body)||body.schemaVersion!==1||body.kind!=='molyvi_basic_controlled_installation'||!uuid(body.projectId)||!isHash(body.ownerHash)||!isHash(body.planHash)||!isHash(body.packageBytesHash)||!isHash(body.themeZipSha256)||!isHash(body.themeManifestHash)||!domain(body.targetStore)||body.mode!=='create_only_operator_journal'||body.networkEnabled!==false||body.publicationAuthorized!==false||body.newChargesAuthorized!==false||body.overwriteExisting!==false||!isId(body.liveThemeId)||!isId(body.inventoryLocationId)||body.currency!=='EUR'||body.registryKey!==hash({targetStore:body.targetStore,projectId:body.projectId})||typeof body.registryDirectory!=='string'||!Array.isArray(body.steps)||body.steps.length<10||body.steps.length>64)fail('CORRUPT_INTENT');
   profilePaths(body.runtimeProfile,body.registryDirectory,undefined,body.projectId);
+  if(body.sourceRetention){
+    const retained=validateBasicSourceRetentionDescriptor(body.sourceRetention);
+    if(body.runtimeProfile!==undefined||retained.projectId!==body.projectId||retained.ownerHash!==body.ownerHash||retained.planHash!==body.planHash)fail('SOURCE_RETENTION_MISMATCH');
+  }
   authorization(body.authorization,expectedScope(body));evidence(body.preflightEvidence);
   if(!Array.isArray(body.preexistingResources)||body.preexistingResources.some(r=>!['catalog','variant','media','collection','page','theme'].includes(r.kind)||!isId(r.remoteId))||new Set(body.preexistingResources.map(r=>`${r.kind}:${r.remoteId}`)).size!==body.preexistingResources.length)fail('CORRUPT_INTENT');
   const seen=new Set();
@@ -157,15 +163,25 @@ async function verifiedTheme(plan,theme){
 }
 
 /** A new private journal only. Existing journals are opened, never recreated. */
-export async function createBasicInstallation({directory,registryDirectory,runtimeProfile,prepared,theme,context,authorization:grant,preflightEvidence,liveThemeId,inventoryLocationId,currency,preexistingResources=[]}={}){
+export async function createBasicInstallation({directory,registryDirectory,runtimeProfile,prepared,referenceComposition,retainSource=false,theme,context,authorization:grant,preflightEvidence,liveThemeId,inventoryLocationId,currency,preexistingResources=[]}={}){
   profile(runtimeProfile);
-  verifyBasicStorePackage(prepared);
-  const plan=structuredClone(prepared.plan),uploads=prepared.uploads.map(item=>({fileName:item.fileName,sha256:sha(item.bytes),bytes:item.bytes.length}));
+  // Reference composition is local opt-in only. Existing hosted profiles keep
+  // their original byte-input and capacity contracts until separately reviewed.
+  if(referenceComposition!==undefined&&runtimeProfile!==undefined)fail('REFERENCE_HOSTED_PROFILE_NOT_ENABLED');
+  if(typeof retainSource!=='boolean'||retainSource&&referenceComposition===undefined)fail('REFERENCE_RETENTION_REQUIRED');
+  const source=createBasicInstallationSource({prepared,referenceComposition});
+  const sourceRetention=retainSource?describeBasicReferenceRetention(referenceComposition):undefined;
+  const {plan,uploads}=source;
   // Snapshot all caller input before the first await.
   const snapshot=structuredClone({context,grant,preflightEvidence,liveThemeId,inventoryLocationId,currency,preexistingResources,runtimeProfile});
   if(typeof registryDirectory!=='string'||typeof directory!=='string')fail('PRIVATE_DIRECTORY_REQUIRED');
   profilePaths(snapshot.runtimeProfile,path.resolve(registryDirectory),path.resolve(directory),plan.projectId);
-  const themeCheck=await verifiedTheme(plan,theme),ownerHash=plan.binding.ownerHash,scope={targetStore:plan.targetStore,projectId:plan.projectId,ownerHash,planHash:plan.planHash};
+  // verifiedTheme snapshots its own caller input synchronously before awaiting.
+  const themeCheckPromise=verifiedTheme(plan,theme);
+  const themeCheck=await themeCheckPromise;
+  if(referenceComposition)await assertBasicSourceUnreserved(referenceComposition);
+  await source.revalidate();
+  const ownerHash=plan.binding.ownerHash,scope={targetStore:plan.targetStore,projectId:plan.projectId,ownerHash,planHash:plan.planHash};
   const steps=[];const add=(key,kind,expected,dependsOn=[])=>steps.push({key,kind,action:kind==='variant_media'?'link_new_resources':'create',expected,payloadHash:hash(expected),dependsOn});
   for(const product of plan.products){
     const key=`catalog:${product.productId}`;
@@ -185,9 +201,12 @@ export async function createBasicInstallation({directory,registryDirectory,runti
   // A hosted reservation cannot be bypassed by selecting a legacy registry.
   for(const reservedRegistry of [BASIC_INSTALL_HOSTED_REGISTRY,BASIC_INSTALL_PREPARED_REGISTRY])if(reservedRegistry!==registry){try{await safeDirectory(reservedRegistry);await readJson(path.join(reservedRegistry,`${registryKey}.json`));fail('INSTALLATION_ALREADY_RESERVED');}catch(error){if(error.code!=='ENOENT')throw error;}}
   const body={schemaVersion:1,kind:'molyvi_basic_controlled_installation',mode:'create_only_operator_journal',...(snapshot.runtimeProfile?{runtimeProfile:snapshot.runtimeProfile}:{}),...scope,...themeCheck,registryDirectory:registry,registryKey,packageBytesHash:hash({plan,uploads}),namespace:plan.namespace,authorization:authorization(snapshot.grant,scope),preflightEvidence:evidence(snapshot.preflightEvidence),liveThemeId:snapshot.liveThemeId,inventoryLocationId:snapshot.inventoryLocationId,currency:snapshot.currency,preexistingResources:snapshot.preexistingResources,steps,networkEnabled:false,publicationAuthorized:false,newChargesAuthorized:false,overwriteExisting:false};
+  if(sourceRetention)body.sourceRetention=sourceRetention;
   const intent=validateIntent({...body,intentHash:hash(body)});contextFor(intent,snapshot.context);
   const absolute=await safeDirectory(directory,{newDirectory:true});
   if(absolute===registry||inside(absolute,registry)||inside(registry,absolute))fail('REGISTRY_SEPARATION_REQUIRED');
+  await source.revalidate();
+  if(sourceRetention)await acquireBasicSourceRetention(referenceComposition,{intentHash:intent.intentHash,journalDirectory:absolute});
   // A trusted caller must always use the same configured registry. Reservation
   // is create-only even after partial initialization; do not reset it to retry.
   try{await writeNew(path.join(registry,`${registryKey}.json`),{intentHash:intent.intentHash,journalDirectory:absolute,projectId:intent.projectId,targetStore:intent.targetStore,planHash:intent.planHash});}
@@ -195,6 +214,8 @@ export async function createBasicInstallation({directory,registryDirectory,runti
   await fs.mkdir(absolute,{mode:0o700});
   await writeNew(path.join(absolute,'intent.json'),intent);
   await writeNew(path.join(absolute,'head.json'),{intentHash:intent.intentHash,sequence:0,eventHash:intent.intentHash});
+  // Failure after reservation preserves the journal and never grants a retry.
+  await source.revalidate();
   return readBasicInstallation({directory:absolute,context:snapshot.context});
 }
 function initial(intent){return {intent,intentHash:intent.intentHash,head:intent.intentHash,eventCount:0,steps:Object.fromEntries(intent.steps.map(s=>[s.key,{status:'pending'}])),visibility:{status:'not_started'},installationStatus:'pending',remoteVerification:'operator_attested_not_independent_remote_verification'};}
@@ -323,6 +344,7 @@ async function immutableJournalSnapshot(directory,context){
 export async function createBasicInstallationContinuation({sourceDirectory,directory,context,authorization:grant,runtimeProfile}={}){
   profile(runtimeProfile);
   const input=structuredClone({sourceDirectory,directory,context,grant}),source=await immutableJournalSnapshot(input.sourceDirectory,input.context),state=source.state,intent=state.intent;
+  if(intent.sourceRetention)fail('RETAINED_CONTINUATION_NOT_SUPPORTED');
   if(intent.runtimeProfile!==runtimeProfile)fail('RUNTIME_PROFILE_MISMATCH');
   if(state.visibility.status!=='not_started'||state.installationStatus!=='pending'||Object.values(state.steps).some(step=>!['pending','succeeded'].includes(step.status)))fail('CONTINUATION_SOURCE_NOT_READY');
   const allowedSteps=intent.steps.filter(step=>state.steps[step.key].status==='pending').map(step=>step.key);
@@ -362,7 +384,9 @@ async function withLock(options,operation){
 }
 async function mutate(options,build){
   return withLock(options,async(directory,context)=>{
-    const state=await readState(directory,context),event=build(state);
+    const state=await readState(directory,context);
+    return withBasicInstallationSourceHold(state.intent,directory,async()=>{
+    const event=build(state);
     if(!event)return {...state,duplicate:true};
     if(state.eventCount>=MAX_EVENTS)fail('JOURNAL_LIMIT');
     const body={...event,sequence:state.eventCount+1,previousHash:state.head,intentHash:state.intentHash};
@@ -375,8 +399,10 @@ async function mutate(options,build){
     await renameBasicInstallationCheckpoint(directory);
     await writeNew(path.join(directory,eventName(body.sequence)),{...body,eventHash});
     return {...await readState(directory,context),duplicate:false};
+    });
   });
 }
+export const releaseBasicInstallationSource=releaseBasicSourceRetention;
 export async function claimBasicInstallationStep(options){
   const key=options.key;return mutate(options,state=>{
     const current=state.steps[key];if(!current)fail('UNKNOWN_STEP');

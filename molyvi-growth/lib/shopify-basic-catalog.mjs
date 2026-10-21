@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import {canonicalJson,IntakeError} from './intake-store.mjs';
-import {verifyBasicStorePackage} from './basic-store-package.mjs';
+import {createBasicInstallationSource} from './basic-installation-source.mjs';
 
 export const SHOPIFY_BASIC_CATALOG_API_VERSION='2026-10';
 export const SHOPIFY_BASIC_CATALOG_STORE='molyvi-still-dev.myshopify.com';
@@ -122,14 +122,15 @@ function connection(value,maximum,code){
  * readback. If Shopify defaults it to zero, this adapter fails closed instead
  * of falsely certifying unknown weight as a measured zero.
  */
-export function createShopifyBasicCatalogTransport({prepared,binding,liveThemeId,inventoryLocationId,accessToken,fetchImpl=globalThis.fetch,networkEnabled=false}={}){
-  verifyBasicStorePackage(prepared);
-  const plan=structuredClone(prepared.plan),uploads=prepared.uploads.map(item=>({fileName:item.fileName,sha256:sha(item.bytes),bytes:item.bytes.length})),pinned=structuredClone(binding);
+export function createShopifyBasicCatalogTransport({prepared,referenceComposition,binding,liveThemeId,inventoryLocationId,accessToken,fetchImpl=globalThis.fetch,networkEnabled=false}={}){
+  const source=createBasicInstallationSource({prepared,referenceComposition});
+  const {plan,uploads}=source,pinned=structuredClone(binding);
   if(!pinned||!equal(Object.keys(pinned).sort(),['intentHash','targetStore','projectId','ownerHash','planHash','themeZipSha256','packageBytesHash'].sort())
     ||!isHash(pinned.intentHash)||!isHash(pinned.themeZipSha256)||pinned.targetStore!==SHOPIFY_BASIC_CATALOG_STORE
     ||plan.targetStore!==pinned.targetStore||plan.projectId!==pinned.projectId||plan.binding.ownerHash!==pinned.ownerHash||plan.planHash!==pinned.planHash
     ||pinned.packageBytesHash!==hash({plan,uploads})||liveThemeId!==SHOPIFY_BASIC_CATALOG_LIVE_THEME_ID||inventoryLocationId!==SHOPIFY_BASIC_CATALOG_LOCATION_ID)fail('BINDING_MISMATCH');
   if(typeof fetchImpl!=='function'||typeof networkEnabled!=='boolean')fail('TRANSPORT_CONFIGURATION_INVALID');
+  fetchImpl=source.guardFetch(fetchImpl);
   if(typeof accessToken!=='string'||accessToken.length<16||accessToken.length>2048||!(/^[\x21-\x7e]+$/).test(accessToken))fail('CREDENTIAL_REQUIRED');
   const steps=new Map(plan.products.map(product=>{
     if(!/^[a-z0-9][a-z0-9-]*$/.test(product.handle)||product.variants.length>SHOPIFY_BASIC_CATALOG_LIMITS.variantsPerProduct)fail('PRODUCT_SOURCE_MISMATCH');
@@ -220,5 +221,5 @@ export function createShopifyBasicCatalogTransport({prepared,binding,liveThemeId
     if(!equal(comparable,step.expected))fail('READBACK_MISMATCH');
     return {...base,outcome:'found',remoteId:numericId(known.remoteId,'Product'),observed,observedAt:new Date().toISOString()};
   }
-  return Object.freeze({supportedKinds:Object.freeze(['catalog']),preflight,apply,readback});
+  return Object.freeze({supportedKinds:Object.freeze(['catalog']),preflight:source.guardMethod(preflight),apply:source.guardMethod(apply),readback:source.guardMethod(readback)});
 }

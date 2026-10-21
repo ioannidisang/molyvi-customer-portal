@@ -1,3 +1,4 @@
+import {allowsHostedBasicInstallReferenceProbe} from './basic-reference-install-probe-scope.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -78,7 +79,7 @@ export async function createBasicPreparationService({store,storage,targetStore=B
   if(!(store instanceof TaskStore) || typeof storage!=='string' || targetStore!==BASIC_PREPARATION_TARGET || typeof buildEnabled!=='boolean' || typeof hostedCompact!=='boolean' || typeof referenceComposition!=='boolean' || typeof clock!=='function')fail('CONFIG_INVALID',500);
   // Explicit LOCAL integration. The existing hosted aggregate-input and memory
   // admission still apply to its old profile; this option cannot bypass them.
-  if(referenceComposition&&(hostedCompact||process.env.RENDER_SERVICE_ID&&!allowsHostedBasicReferenceProbe({store,storage,buildRoot})))fail('REFERENCE_HOSTED_NOT_ENABLED',403);
+  if(referenceComposition&&(hostedCompact||process.env.RENDER_SERVICE_ID&&!allowsHostedBasicReferenceProbe({store,storage,buildRoot})&&!allowsHostedBasicInstallReferenceProbe({store,storage,buildRoot})))fail('REFERENCE_HOSTED_NOT_ENABLED',403);
   if(referenceComposition&&(!buildEnabled||typeof decodeImage!=='function')||!referenceComposition&&decodeImage!==undefined)fail('REFERENCE_CONFIG_INVALID',500);
   const version=referenceComposition?{schemaVersion:2,packageFormat:BASIC_REFERENCE_PREPARATION_FORMAT}:{schemaVersion:1};
   const validate=(...args)=>validateRecord(...args,referenceComposition);

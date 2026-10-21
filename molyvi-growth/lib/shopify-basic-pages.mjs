@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import {canonicalJson,IntakeError} from './intake-store.mjs';
-import {verifyBasicStorePackage} from './basic-store-package.mjs';
+import {createBasicInstallationSource} from './basic-installation-source.mjs';
 
 export const SHOPIFY_BASIC_PAGES_API_VERSION='2026-10';
 export const SHOPIFY_BASIC_PAGES_STORE='molyvi-still-dev.myshopify.com';
@@ -79,16 +79,16 @@ async function responseJson(response,signal){
  * The create result is never evidence of persisted content; readback re-queries
  * the exact ID and hashes the returned HTML. No overwrite/delete/publish methods.
  */
-export function createShopifyBasicPagesTransport({prepared,binding,liveThemeId,accessToken,fetchImpl=globalThis.fetch,networkEnabled=false}={}){
-  verifyBasicStorePackage(prepared);
-  const plan=structuredClone(prepared.plan);
-  const uploads=prepared.uploads.map(item=>({fileName:item.fileName,sha256:sha(item.bytes),bytes:item.bytes.length}));
+export function createShopifyBasicPagesTransport({prepared,referenceComposition,binding,liveThemeId,accessToken,fetchImpl=globalThis.fetch,networkEnabled=false}={}){
+  const source=createBasicInstallationSource({prepared,referenceComposition});
+  const {plan,uploads}=source;
   const pinned=structuredClone(binding);
   if(!pinned||!equal(Object.keys(pinned).sort(),['intentHash','targetStore','projectId','ownerHash','planHash','themeZipSha256','packageBytesHash'].sort())
     ||!isHash(pinned.intentHash)||!isHash(pinned.themeZipSha256)||pinned.targetStore!==SHOPIFY_BASIC_PAGES_STORE
     ||plan.targetStore!==pinned.targetStore||plan.projectId!==pinned.projectId||plan.binding.ownerHash!==pinned.ownerHash
     ||plan.planHash!==pinned.planHash||pinned.packageBytesHash!==hash({plan,uploads})||!isId(liveThemeId))fail('BINDING_MISMATCH');
   if(typeof fetchImpl!=='function'||typeof networkEnabled!=='boolean')fail('TRANSPORT_CONFIGURATION_INVALID');
+  fetchImpl=source.guardFetch(fetchImpl);
   // Do not trim credentials or accept controls: a bad value must never reach a header.
   if(typeof accessToken!=='string'||accessToken.length<16||accessToken.length>2048||!(/^[\x21-\x7e]+$/).test(accessToken))fail('CREDENTIAL_REQUIRED');
   const steps=new Map(plan.pages.map(page=>{
@@ -174,5 +174,5 @@ export function createShopifyBasicPagesTransport({prepared,binding,liveThemeId,a
     if(!equal(observed,step.expected))fail('READBACK_MISMATCH');
     return {...base,outcome:'found',remoteId:known.remoteId.split('/').at(-1),observed,observedAt:new Date().toISOString()};
   }
-  return Object.freeze({supportedKinds:Object.freeze(['page']),preflight,apply,readback});
+  return Object.freeze({supportedKinds:Object.freeze(['page']),preflight:source.guardMethod(preflight),apply:source.guardMethod(apply),readback:source.guardMethod(readback)});
 }

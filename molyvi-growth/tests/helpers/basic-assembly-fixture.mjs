@@ -37,13 +37,16 @@ const fixtureImage=(provider,context,defaultName)=>{
  * Optional sourceImage/generatedImage providers accept already-loaded bytes for
  * an explicitly synthetic display fixture. They never attest new AI execution.
  * productDetails and sizeProductIndices preserve a display example's structure.
+ * sourcePhotosPerUnit (1..10) exercises the existing original-photo allowance.
  */
 export function createBasicAssemblyFixture(settings={}){
   const {withColorUnits=false,sizeProductCount=0,missingSku=false,brandName='SYNTHETIC BASIC BRAND'}=settings;
   const productCount=settings.productCount??(withColorUnits?9:10);
+  const sourcePhotosPerUnit=settings.sourcePhotosPerUnit??1;
   if(!Number.isSafeInteger(productCount)||productCount<1||productCount>10
     ||!Number.isSafeInteger(sizeProductCount)||sizeProductCount<0||sizeProductCount>productCount
-    ||typeof withColorUnits!=='boolean'||productCount+(withColorUnits?1:0)>10)throw new RangeError('Synthetic Basic fixture must contain one to ten visual units.');
+    ||typeof withColorUnits!=='boolean'||productCount+(withColorUnits?1:0)>10
+    ||!Number.isSafeInteger(sourcePhotosPerUnit)||sourcePhotosPerUnit<1||sourcePhotosPerUnit>10)throw new RangeError('Synthetic Basic fixture must contain one to ten visual units with one to ten original photos each.');
   const sizeProductIndices=settings.sizeProductIndices??Array.from({length:sizeProductCount},(_,index)=>index);
   if(!Array.isArray(sizeProductIndices)||new Set(sizeProductIndices).size!==sizeProductIndices.length||sizeProductIndices.some(index=>!Number.isSafeInteger(index)||index<0||index>=productCount))throw new RangeError('Invalid synthetic fixture size-product indices.');
 
@@ -97,10 +100,15 @@ export function createBasicAssemblyFixture(settings={}){
           stock:valueAt(settings.stock,context,[12,0,100][(productIndex+variantIndex)%3]),
           weightGrams:valueAt(settings.weightGrams,context,200)};
       });
-      const image=fixtureImage(settings.sourceImage,{productIndex,unitIndex,color},'synthetic-source.png');
-      const original={id:sourceId,productId:id,name:image.name,mime:image.mime,bytes:image.bytes.length,sha256:image.sha256};
-      record.assets[sourceId]=original;sourceAssets.push({asset:original,bytes:image.bytes});photos.push(sourceId);variants.push(...unitVariants);
-      visualUnits.push({id:unitId,color,variantIds:unitVariants.map(variant=>variant.id),sourceAssetIds:[sourceId],representationNote:'Synthetic unit: same presentation for its sizes; separate source identity for its color.'});
+      const sourceIds=[];
+      for(let photoIndex=0;photoIndex<sourcePhotosPerUnit;photoIndex++){
+        const currentSourceId=photoIndex===0?sourceId:uuid();
+        const image=fixtureImage(settings.sourceImage,{productIndex,unitIndex,color,photoIndex},'synthetic-source.png');
+        const original={id:currentSourceId,productId:id,name:image.name,mime:image.mime,bytes:image.bytes.length,sha256:image.sha256};
+        record.assets[currentSourceId]=original;sourceAssets.push({asset:original,bytes:image.bytes});photos.push(currentSourceId);sourceIds.push(currentSourceId);
+      }
+      variants.push(...unitVariants);
+      visualUnits.push({id:unitId,color,variantIds:unitVariants.map(variant=>variant.id),sourceAssetIds:sourceIds,representationNote:'Synthetic unit: same presentation for its sizes; separate source identity for its color.'});
     }
     const details=settings.productDetails?.({productIndex})??{};
     const product={id,title:details.title??`Synthetic product ${productIndex+1}`,description:details.description??'Synthetic <not HTML> description; no real customer or product.',photos,category:details.category??'home',facts:details.facts??['Synthetic fixture only'],variants,visualUnits,improveTitle:false,improveDescription:false};

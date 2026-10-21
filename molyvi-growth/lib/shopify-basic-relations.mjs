@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import {canonicalJson,IntakeError} from './intake-store.mjs';
-import {verifyBasicStorePackage} from './basic-store-package.mjs';
+import {createBasicInstallationSource} from './basic-installation-source.mjs';
 
 export const SHOPIFY_BASIC_RELATIONS_API_VERSION='2026-10';
 export const SHOPIFY_BASIC_RELATIONS_STORE='molyvi-still-dev.myshopify.com';
@@ -54,10 +54,12 @@ function catalogExpected(p){return {handle:p.handle,title:p.title,descriptionHtm
  * deletion, publication, automatic network retry or handle-based adoption.
  * Re-reading media READY verifies association/state, not source pixel fidelity.
  */
-export function createShopifyBasicRelationsTransport({prepared,binding,liveThemeId,inventoryLocationId,accessToken,fetchImpl=globalThis.fetch,networkEnabled=false}={}){
- verifyBasicStorePackage(prepared);const plan=structuredClone(prepared.plan),uploads=prepared.uploads.map(v=>({fileName:v.fileName,sha256:sha(v.bytes),bytes:v.bytes.length})),pinned=structuredClone(binding);
+export function createShopifyBasicRelationsTransport({prepared,referenceComposition,binding,liveThemeId,inventoryLocationId,accessToken,fetchImpl=globalThis.fetch,networkEnabled=false}={}){
+ const source=createBasicInstallationSource({prepared,referenceComposition});
+ const {plan,uploads}=source,pinned=structuredClone(binding);
  if(!pinned||!equal(Object.keys(pinned).sort(),['intentHash','targetStore','projectId','ownerHash','planHash','themeZipSha256','packageBytesHash'].sort())||!isHash(pinned.intentHash)||!isHash(pinned.themeZipSha256)||pinned.targetStore!==SHOPIFY_BASIC_RELATIONS_STORE||plan.targetStore!==pinned.targetStore||plan.projectId!==pinned.projectId||plan.binding.ownerHash!==pinned.ownerHash||plan.planHash!==pinned.planHash||pinned.packageBytesHash!==hash({plan,uploads})||liveThemeId!==LIVE_THEME||inventoryLocationId!==LOCATION)fail('BINDING_MISMATCH');
  if(typeof fetchImpl!=='function'||typeof networkEnabled!=='boolean')fail('CONFIGURATION_INVALID');
+ fetchImpl=source.guardFetch(fetchImpl);
  if(typeof accessToken!=='string'||accessToken.length<16||accessToken.length>2048||!(/^[\x21-\x7e]+$/).test(accessToken))fail('CREDENTIAL_REQUIRED');
  const products=new Map(plan.products.map(p=>[`catalog:${p.productId}`,p])),steps=new Map();
  for(const p of plan.products){const parentKey=`catalog:${p.productId}`,expected={parentKey,associations:p.variants.map(v=>({localId:v.id,mediaKey:`media:${p.productId}:${v.imagePosition}`}))};steps.set(`variant_media:${p.productId}`,{key:`variant_media:${p.productId}`,kind:'variant_media',action:'link_new_resources',expected,payloadHash:hash(expected),dependsOn:[parentKey,...p.photos.map(v=>`media:${p.productId}:${v.position}`)]});}
@@ -107,5 +109,5 @@ export function createShopifyBasicRelationsTransport({prepared,binding,liveTheme
   else{const c=data.collection;if(!c)return {...base,outcome:'unknown',observedAt:new Date().toISOString()};if(c.id!==known.remoteId||c.title!==step.expected.title||c.handle!==step.expected.handle)fail('COLLECTION_READBACK_MISMATCH');noPublications(c.resourcePublicationsCount);const members=connection(c.products,10,'COLLECTION_MEMBERSHIP_MISMATCH').map(p=>p?.id);if(members.length!==ids.length||new Set(members).size!==ids.length||!equal([...members].sort(),[...ids].sort()))fail('COLLECTION_MEMBERSHIP_MISMATCH');observed={title:c.title,handle:c.handle,productRemoteIds:ids.map(value=>numeric(members.find(v=>v===value),'Product')),channels:[]};}
   return {...base,outcome:'found',remoteId:numeric(known.remoteId,step.kind==='variant_media'?'Product':'Collection'),observed,observedAt:new Date().toISOString()};
  }
- return Object.freeze({supportedKinds:Object.freeze(['variant_media','collection']),preflight,apply,readback});
+ return Object.freeze({supportedKinds:Object.freeze(['variant_media','collection']),preflight:source.guardMethod(preflight),apply:source.guardMethod(apply),readback:source.guardMethod(readback)});
 }

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import {canonicalJson,IntakeError} from './intake-store.mjs';
-import {verifyBasicStorePackage} from './basic-store-package.mjs';
+import {createBasicInstallationSource} from './basic-installation-source.mjs';
 
 export const SHOPIFY_BASIC_MEDIA_API_VERSION='2026-10';
 export const SHOPIFY_BASIC_MEDIA_STORE='molyvi-still-dev.myshopify.com';
@@ -67,19 +67,19 @@ function expectedCatalog(product,inventoryLocationId){return {handle:product.han
  * Current allowlist intentionally supports Google's Shopify staged bucket only;
  * an unrecognized official storage host fails closed pending explicit review.
  */
-export function createShopifyBasicMediaTransport({prepared,binding,liveThemeId,accessToken,fetchImpl,uploadFetch,decodeImage,networkEnabled=false}={}){
- verifyBasicStorePackage(prepared);
- const plan=structuredClone(prepared.plan),pinned=structuredClone(binding),sources=new Map(prepared.uploads.map(u=>[u.fileName,Buffer.from(u.bytes)]));
- const uploads=prepared.uploads.map(u=>({fileName:u.fileName,sha256:sha(u.bytes),bytes:u.bytes.length}));
+export function createShopifyBasicMediaTransport({prepared,referenceComposition,binding,liveThemeId,accessToken,fetchImpl,uploadFetch,decodeImage,networkEnabled=false}={}){
+ const source=createBasicInstallationSource({prepared,referenceComposition,retainLegacyBytes:true});
+ const {plan,uploads}=source,pinned=structuredClone(binding),assets=new Map(uploads.map(asset=>[asset.fileName,asset]));
  if(!pinned||!equal(Object.keys(pinned).sort(),['intentHash','targetStore','projectId','ownerHash','planHash','themeZipSha256','packageBytesHash'].sort())||!isHash(pinned.intentHash)||!isHash(pinned.themeZipSha256)||pinned.targetStore!==SHOPIFY_BASIC_MEDIA_STORE||plan.targetStore!==pinned.targetStore||plan.projectId!==pinned.projectId||plan.binding.ownerHash!==pinned.ownerHash||plan.planHash!==pinned.planHash||pinned.packageBytesHash!==hash({plan,uploads})||liveThemeId!=='207379235153')fail('BINDING_MISMATCH');
  if(typeof networkEnabled!=='boolean'||typeof fetchImpl!=='function'||typeof uploadFetch!=='function'||typeof decodeImage!=='function')fail('TRANSPORT_CONFIGURATION_INVALID');
  if(typeof accessToken!=='string'||accessToken.length<16||accessToken.length>2048||!(/^[\x21-\x7e]+$/).test(accessToken))fail('CREDENTIAL_REQUIRED');
+ const graphFetch=source.guardFetch(fetchImpl),cdnFetch=source.guardFetch(uploadFetch);
  const steps=new Map();
  for(const product of plan.products)for(const photo of product.photos){
-  const expected={parentKey:`catalog:${product.productId}`,position:photo.position,sourceSha256:photo.sha256,alt:photo.alt},bytes=sources.get(photo.fileName);
-  if(!bytes||bytes.length!==photo.bytes||bytes.length>MAX_BYTES||sha(bytes)!==photo.sha256||!['image/png','image/jpeg','image/webp'].includes(photo.mime))fail('SOURCE_INVALID');
+  const expected={parentKey:`catalog:${product.productId}`,position:photo.position,sourceSha256:photo.sha256,alt:photo.alt},asset=assets.get(photo.fileName);
+  if(!asset||asset.bytes!==photo.bytes||asset.bytes>MAX_BYTES||asset.sha256!==photo.sha256||!['image/png','image/jpeg','image/webp'].includes(photo.mime))fail('SOURCE_INVALID');
   const step={key:`media:${product.productId}:${photo.position}`,kind:'media',action:'create',expected,payloadHash:hash(expected),dependsOn:[expected.parentKey]};
-  steps.set(step.key,{step,product,photo,bytes});
+  steps.set(step.key,{step,product,photo});
  }
  const attempts=new Map(),sent=new Set(),preflights=new Map(),completed=new Map(),counts=new Map();
  const key=r=>`${r.step.key}:${r.attemptId??'before-claim'}`;
@@ -116,7 +116,7 @@ export function createShopifyBasicMediaTransport({prepared,binding,liveThemeId,a
  }
  async function graphql(operation,variables,r,options={}){return guarded(async signal=>{
   const count=(counts.get(r.step.key)??0)+1;if(count>20)fail('REQUEST_BUDGET_EXHAUSTED');counts.set(r.step.key,count);
-  const response=await abortable(fetchImpl(ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-Shopify-Access-Token':accessToken},body:JSON.stringify({query:SHOPIFY_BASIC_MEDIA_OPERATIONS[operation],variables}),redirect:'error',credentials:'omit',cache:'no-store',signal}),signal);
+  const response=await abortable(graphFetch(ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','X-Shopify-Access-Token':accessToken},body:JSON.stringify({query:SHOPIFY_BASIC_MEDIA_OPERATIONS[operation],variables}),redirect:'error',credentials:'omit',cache:'no-store',signal}),signal);
   if(response.url&&response.url!==ENDPOINT)fail('RESPONSE_ORIGIN_MISMATCH');
   if(!/^application\/json(?:;|$)/i.test(response.headers?.get('content-type')??''))fail('RESPONSE_CONTENT_TYPE');
   if(response.headers?.get('x-shopify-api-version')!==SHOPIFY_BASIC_MEDIA_API_VERSION)fail('API_VERSION_MISMATCH');
@@ -133,17 +133,31 @@ export function createShopifyBasicMediaTransport({prepared,binding,liveThemeId,a
  async function apply(input,options={}){
   const r=structuredClone(input),item=validate(r,{attempt:true}),k=key(r),checked=preflights.get(k);
   if(sent.has(item.step.key)||attempts.has(k))fail('ATTEMPT_ALREADY_SENT');if(!checked||Date.now()-checked.at>TIMEOUT_MS||checked.parentRemoteId!==item.parent.remoteId)fail('FRESH_PREFLIGHT_REQUIRED');
-  const known={parentRemoteId:item.parent.remoteId,sourceSha256:sha(item.bytes),sourceBytes:item.bytes.length,uploaded:false,remoteId:null,attachSent:false};attempts.set(k,known);sent.add(item.step.key);preflights.delete(k);
-  const filename=item.photo.fileName.split('/').at(-1),stage=await graphql('stage',{input:[{filename,mimeType:item.photo.mime,httpMethod:'POST',resource:'FILE',fileSize:String(item.bytes.length)}]},r,options);
+  const known={parentRemoteId:item.parent.remoteId,sourceSha256:item.photo.sha256,sourceBytes:item.photo.bytes,uploaded:false,remoteId:null,attachSent:false};attempts.set(k,known);sent.add(item.step.key);preflights.delete(k);
+  const filename=item.photo.fileName.split('/').at(-1),stage=await graphql('stage',{input:[{filename,mimeType:item.photo.mime,httpMethod:'POST',resource:'FILE',fileSize:String(item.photo.bytes)}]},r,options);
   const s=stage.stagedUploadsCreate;if(!s||s.userErrors?.length||!Array.isArray(s.userErrors)||s.stagedTargets?.length!==1)fail('STAGING_UNCONFIRMED');
   const target=s.stagedTargets[0],uploadUrl=safeUrl(target.url,'upload'),resourceUrl=safeUrl(target.resourceUrl,'resource');
   if(!Array.isArray(target.parameters)||target.parameters.length<2||target.parameters.length>20||new Set(target.parameters.map(p=>p.name)).size!==target.parameters.length)fail('UNSAFE_UPLOAD_PARAMETERS');
-  const form=new FormData();for(const p of target.parameters){if(typeof p.name!=='string'||!(/^(?:key|policy|acl|success_action_status|Content-Type|x-goog-[a-z0-9-]+|GoogleAccessId|signature)$/).test(p.name)||typeof p.value!=='string'||p.value.length>16_384||/[\x00-\x1f]/.test(p.value))fail('UNSAFE_UPLOAD_PARAMETERS');form.append(p.name,p.value);}
+  for(const p of target.parameters){if(typeof p.name!=='string'||!(/^(?:key|policy|acl|success_action_status|Content-Type|x-goog-[a-z0-9-]+|GoogleAccessId|signature)$/).test(p.name)||typeof p.value!=='string'||p.value.length>16_384||/[\x00-\x1f]/.test(p.value))fail('UNSAFE_UPLOAD_PARAMETERS');}
   const uploadKey=target.parameters.find(p=>p.name==='key')?.value;
   let resourcePath;try{resourcePath=decodeURIComponent(new URL(resourceUrl).pathname);}catch{fail('UNSAFE_UPLOAD_PARAMETERS');}
   if(target.parameters.find(p=>p.name==='Content-Type')?.value!==item.photo.mime||typeof uploadKey!=='string'||!uploadKey.endsWith(`/${filename}`)||uploadKey.startsWith('/')||uploadKey.includes('..')||new URL(resourceUrl).hostname!==new URL(uploadUrl).hostname||resourcePath!==`/${uploadKey}`)fail('UNSAFE_UPLOAD_PARAMETERS');
-  form.append('file',new Blob([item.bytes],{type:item.photo.mime}),filename);
-  await guarded(async signal=>{const response=await abortable(uploadFetch(uploadUrl,{method:'POST',body:form,redirect:'error',credentials:'omit',cache:'no-store',signal}),signal);if(response.url&&response.url!==uploadUrl)fail('UPLOAD_RESPONSE_ORIGIN_MISMATCH');await boundedBody(response,signal,64*1024);},options.signal);known.uploaded=true;
+  // Stage outside the exclusive source lease. Keep only this selected file
+  // through the actual POST, release it before fileCreate/processing/attach.
+  await source.withAsset(item.photo.fileName,async({bytes})=>{
+   const form=new FormData();for(const p of target.parameters)form.append(p.name,p.value);
+   form.append('file',new Blob([bytes],{type:item.photo.mime}),filename);
+   await guarded(async signal=>{
+    if(signal.aborted)fail('REQUEST_ABORTED');
+    // Abort is advisory. Do not race away from an outstanding upload: retain
+    // the source lease until the actual request settles, even if a runner has
+    // already timed out. Its sent attempt remains unknown and cannot replay.
+    const upload=uploadFetch(uploadUrl,{method:'POST',body:form,redirect:'error',credentials:'omit',cache:'no-store',signal});
+    const response=await (referenceComposition!==undefined?upload:abortable(upload,signal));
+    if(signal.aborted)fail('REQUEST_ABORTED');
+    if(response.url&&response.url!==uploadUrl)fail('UPLOAD_RESPONSE_ORIGIN_MISMATCH');await boundedBody(response,signal,64*1024);
+   },options.signal);
+  });known.uploaded=true;
   const created=await graphql('create',{files:[{alt:item.photo.alt,contentType:'IMAGE',filename,originalSource:resourceUrl,duplicateResolutionMode:'RAISE_ERROR'}]},r,options),c=created.fileCreate;
   if(!c||!Array.isArray(c.userErrors)||c.userErrors.length||c.files?.length!==1||!/^gid:\/\/shopify\/MediaImage\/[1-9][0-9]{0,24}$/.test(c.files[0]?.id))fail('CREATE_OUTCOME_UNCONFIRMED');known.remoteId=c.files[0].id;
   let ready=false;
@@ -169,7 +183,7 @@ export function createShopifyBasicMediaTransport({prepared,binding,liveThemeId,a
   if(actual.status!=='READY'||actual.fileStatus!=='READY')return {...base,outcome:'unknown'};
   const url=safeUrl(actual.image?.url,'cdn');if(!Number.isSafeInteger(actual.image.width)||actual.image.width<1||!Number.isSafeInteger(actual.image.height)||actual.image.height<1||actual.image.width*actual.image.height>40_000_000)fail('IMAGE_DIMENSIONS_INVALID');
   const retrieved=await guarded(async signal=>{
-   const response=await abortable(uploadFetch(url,{method:'GET',headers:{Accept:'image/png,image/jpeg,image/webp'},redirect:'error',credentials:'omit',cache:'no-store',signal}),signal);
+   const response=await abortable(cdnFetch(url,{method:'GET',headers:{Accept:'image/png,image/jpeg,image/webp'},redirect:'error',credentials:'omit',cache:'no-store',signal}),signal);
    if(response.url&&response.url!==url)fail('CDN_RESPONSE_ORIGIN_MISMATCH');
    const mime=response.headers?.get('content-type')?.split(';')[0];if(!['image/png','image/jpeg','image/webp'].includes(mime))fail('CDN_IMAGE_INVALID');
    const bytes=await boundedBody(response,signal,MAX_BYTES),decoded=await abortable(decodeImage(Buffer.from(bytes),{mime,maxPixels:40_000_000,signal}),signal);
@@ -179,5 +193,5 @@ export function createShopifyBasicMediaTransport({prepared,binding,liveThemeId,a
   completed.set(item.step.key,{remoteId:known.remoteId});
   return {...base,outcome:'found',remoteId:known.remoteId.split('/').at(-1),observed:{parentRemoteId:data.product.id.split('/').at(-1),position:actualPosition,sourceSha256:known.sourceSha256,alt:actual.alt,loaded:true},provenance:{kind:'source_upload_then_definite_file_id',sourceSha256:known.sourceSha256,sourceBytes:known.sourceBytes,cdn:retrieved,cdnBytesEqualSource:retrieved.sha256===known.sourceSha256,visualFidelityCertified:false},observedAt:new Date().toISOString()};
  }
- return Object.freeze({supportedKinds:Object.freeze(['media']),preflight,apply,readback});
+ return Object.freeze({supportedKinds:Object.freeze(['media']),preflight:source.guardMethod(preflight),apply:source.guardMethod(apply),readback:source.guardMethod(readback)});
 }
