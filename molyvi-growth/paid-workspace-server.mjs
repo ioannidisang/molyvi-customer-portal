@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {constants} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
 import {pipeline} from 'node:stream/promises';
@@ -33,6 +34,31 @@ import {isHostedBasicPipeline} from './lib/hosted-basic-pipeline.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url));
 const json=(res,status,body,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(body));};
+const backupStatic=new Map([['/','customer.html'],['/customer/','customer.html'],['/customer.js','customer.js'],['/customer.css','customer.css'],['/delivery-status.css','delivery-status.css'],['/adjustments.js','adjustments.js'],['/adjustments.css','adjustments.css'],['/workspace/','index.html'],['/workspace.js','workspace.js'],['/basic-preparation.js','basic-preparation.js'],['/products.js','products.js'],['/catalog-editor.js','catalog-editor.js'],['/gallery.js','gallery.js'],['/shipping.js','shipping.js'],['/merchant-payments.js','merchant-payments.js'],['/store-content.js','store-content.js'],['/workspace.css','workspace.css']]);
+const backupApi=new Set(['/api/service-config','/api/customer/me','/api/workspace']);
+const backupReadLimits=Object.freeze({staticBytes:262144,workspaceBytes:2097152,workspaceResponseBytes:1048576,accountResponseBytes:262144,projects:32,deliveries:128,operatorProjects:32});
+const backupUnavailable=()=>new IntakeError('BACKUP_READ_TEMPORARILY_UNAVAILABLE',503);
+// Used only by the opt-in backup read view. Ordinary store reads are unchanged.
+// Bound allocation before reading/JSON parsing and retain one fd for the check.
+async function boundedBackupRead(file,limit,guard){
+  guard();const full=path.resolve(file),parsed=path.parse(full);let at=parsed.root;
+  for(const part of full.slice(parsed.root.length).split(path.sep).filter(Boolean)){
+    at=path.join(at,part);const info=await fs.lstat(at);guard();
+    if(info.isSymbolicLink()||(at===full?!info.isFile():!info.isDirectory()))throw backupUnavailable();
+  }
+  const handle=await fs.open(full,constants.O_RDONLY|(constants.O_NOFOLLOW??0));
+  try{
+    guard();const before=await handle.stat();guard();
+    if(!before.isFile()||before.size>limit)throw backupUnavailable();
+    const buffer=Buffer.alloc(before.size);let used=0;
+    while(used<buffer.length){const read=await handle.read(buffer,used,Math.min(65536,buffer.length-used),used);guard();if(!read.bytesRead)throw backupUnavailable();used+=read.bytesRead;}
+    const extra=await handle.read(Buffer.alloc(1),0,1,used);guard();
+    const after=await handle.stat(),linked=await fs.lstat(full);guard();
+    if(extra.bytesRead||linked.isSymbolicLink()||before.dev!==after.dev||before.ino!==after.ino||before.size!==after.size||before.mtimeMs!==after.mtimeMs||
+      linked.dev!==after.dev||linked.ino!==after.ino||linked.size!==after.size||linked.mtimeMs!==after.mtimeMs)throw backupUnavailable();
+    return buffer;
+  }finally{await handle.close();}
+}
 async function body(req,limit=32_768) {
   if(!/^application\/json(?:;\s*charset=utf-8)?$/i.test(req.headers['content-type']??''))throw new IntakeError('JSON_REQUIRED',415);
   const chunks=[];let size=0;
@@ -80,6 +106,9 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     return visible;
   };
   let closing=false,activeArchives=0,activeHandlers=0,backupPaused=false,preparationPaused=false,heavyPaused=false,startupSettled=true,startupFailure=null,startup=Promise.resolve();
+  let backupReadOnlyActive=false,backupReadGeneration=0,backupPrivateReaders=0,backupReadResponses=0;
+  const revokeBackupReads=()=>{backupReadOnlyActive=false;backupReadGeneration++;};
+  const readAllowed=(req,url)=>req.method==='GET'&&!url.search&&(backupStatic.has(url.pathname)||backupApi.has(url.pathname));
   const requestSlots=new RequestSlots();
   const signalPhotoQueue=()=>{if(!closing&&!heavyPaused)void photoQueue.tick().catch(()=>{/* Persisted queue state retains evidence and bounded recovery. */});};
   const signalProductQueue=()=>{if(!closing&&!heavyPaused)void productQueue.tick().catch(()=>{/* Persisted attempts prevent blind retries. */});};
@@ -99,7 +128,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     pumps.set(session.projectId,running);
   };
   const server=http.createServer(async(req,res)=>{
-    let counted=false;
+    let counted=false,finishBackupRead;
     try{
     const port=server.address()?.port,{origin,client,health}=boundary.inspect(req,port),url=new URL(req.url,origin);
     if(boundary.hosted){res.setHeader('Strict-Transport-Security','max-age=31536000');res.setHeader('Referrer-Policy','no-referrer');}
@@ -107,7 +136,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     // drain counter. Its ordinary host/target validation still applies.
     if(health){customerAccess.accounts.db.prepare('SELECT 1').get();return json(res,200,req.method==='HEAD'?undefined:{status:'ok'});}
     const rejectPaused=()=>{
-      if(closing||heavyPaused||backupPaused){json(res,503,{error:backupPaused?'BACKUP_SNAPSHOT_IN_PROGRESS':'BACKUP_RESOURCES_IN_PROGRESS'},{'Retry-After':'15'});return true;}
+      if(closing||backupPaused||heavyPaused&&(!backupReadOnlyActive||!readAllowed(req,url))){json(res,503,{error:backupPaused?'BACKUP_SNAPSHOT_IN_PROGRESS':'BACKUP_RESOURCES_IN_PROGRESS'},{'Retry-After':'15'});return true;}
       if(preparationPaused&&(!['GET','HEAD'].includes(req.method)||url.pathname.startsWith('/customer-files/')||url.pathname.startsWith('/operator-revision-files/')||url.pathname.startsWith('/api/operator/adjustment-preview'))){json(res,503,{error:'PREPARATION_IN_PROGRESS'},{'Retry-After':'5'});return true;}
       return false;
     };
@@ -136,6 +165,51 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
       // normal top-level navigation. Cross-site API/subresource requests remain blocked.
       const publicEntryNavigation=boundary.hosted&&['GET','HEAD'].includes(req.method)&&['/','/customer/'].includes(url.pathname)&&req.headers['sec-fetch-mode']==='navigate'&&req.headers['sec-fetch-dest']==='document';
       if(req.headers.origin && req.headers.origin!==origin || req.headers['sec-fetch-site']==='cross-site'&&!publicEntryNavigation)throw new IntakeError('ORIGIN_NOT_ALLOWED',403);
+      if(heavyPaused){
+        const privateRead=backupApi.has(url.pathname),generation=backupReadGeneration;
+        if(privateRead&&backupPrivateReaders)throw backupUnavailable();
+        if(privateRead)backupPrivateReaders++;
+        backupReadResponses++;
+        let handlerDone=false,responseDone=res.writableFinished||res.destroyed,released=false;
+        const release=()=>{if(!released&&handlerDone&&responseDone){released=true;backupReadResponses--;if(privateRead)backupPrivateReaders--;}};
+        const responseSettled=()=>{responseDone=true;release();};
+        res.once('finish',responseSettled);res.once('close',responseSettled);
+        finishBackupRead=()=>{handlerDone=true;release();};
+        const guard=()=>{if(closing||backupPaused||!heavyPaused||!backupReadOnlyActive||generation!==backupReadGeneration||res.destroyed)throw backupUnavailable();};
+        const send=value=>{
+          guard();const text=JSON.stringify(value),limit=url.pathname==='/api/workspace'?backupReadLimits.workspaceResponseBytes:backupReadLimits.accountResponseBytes;
+          if(Buffer.byteLength(text)>limit)throw backupUnavailable();
+          guard();res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','X-Molyvi-Backup-Mode':'read-only'});res.end(text);
+        };
+        guard();
+        if(url.pathname==='/api/service-config')return send({allowDemoOrders:false,servicePayments:null,customerAccess:true,customerCodeRequests:false,basicPreparationEnabled:false,deploymentMode:'hosted_staging',realEmailEnabled:Boolean(customerAccess?.notifications?.transport?.enabled),backupReadOnly:true});
+        if(privateRead){
+          const token=String(req.headers.cookie??'').split(';').map(p=>p.trim()).find(p=>p.startsWith(boundary.cookieName+'='))?.slice(boundary.cookieName.length+1);
+          const session=customerAccess.accounts.authenticate(token);guard();
+          if(url.pathname==='/api/customer/me'){
+            const db=customerAccess.accounts.db,accountId=session.accountId;
+            const projects=db.prepare('SELECT count(*) n FROM projects WHERE account_id=?').get(accountId).n;
+            const deliveries=db.prepare('SELECT count(*) n FROM deliveries d JOIN projects p ON p.id=d.project_id WHERE p.account_id=?').get(accountId).n;
+            const operatorProjects=db.prepare('SELECT count(*) n FROM feedback_operator_grants WHERE account_id=?').get(accountId).n;
+            if(projects>backupReadLimits.projects||deliveries>backupReadLimits.deliveries||operatorProjects>backupReadLimits.operatorProjects)throw backupUnavailable();
+            return send({...customerAccess.accounts.view(session),backupReadOnly:true});
+          }
+          if(!session.projectId)throw new IntakeError('PROJECT_REQUIRED',409);
+          const record=await store.serial(session.projectId,async()=>{
+            guard();const directory=await store.directory(session.projectId);guard();
+            const raw=await boundedBackupRead(path.join(directory,'workspace.json'),backupReadLimits.workspaceBytes,guard);guard();
+            const parsed=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));
+            if(parsed.id!==session.projectId||parsed.ownerId!==session.ownerId)throw new IntakeError('NOT_OWNER',403);
+            return parsed;
+          });
+          guard();return send({...view(record),backupReadOnly:true}); // Deliberately no pump or worker signal.
+        }
+        const name=backupStatic.get(url.pathname),data=await boundedBackupRead(path.join(realSite,name),backupReadLimits.staticBytes,guard);
+        guard();const type=name.endsWith('.html')?'text/html':name.endsWith('.js')?'text/javascript':'text/css';
+        res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Molyvi-Backup-Mode':'read-only',
+          'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'"});
+        res.end(data);return;
+      }
       if(url.pathname.startsWith('/api/')) {
         if(req.method==='POST' && req.headers.origin!==origin)throw new IntakeError('ORIGIN_REQUIRED',403);
         if(url.pathname==='/api/service-config'&&req.method==='GET')return json(res,200,{allowDemoOrders,servicePayments:paymentBridge?.status()??null,customerAccess:Boolean(customerAccess),customerCodeRequests:Boolean(customerAccess?.notifications),basicPreparationEnabled:Boolean(basicPreparation),deploymentMode:boundary.hosted?'hosted_staging':'local_test',realEmailEnabled:Boolean(customerAccess?.notifications?.transport?.enabled)});
@@ -412,8 +486,8 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
       res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
         'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'"});
       res.end(req.method==='HEAD'?undefined:data);
-    }catch(error) {if(!res.headersSent)json(res,error instanceof IntakeError?error.status:500,{error:error instanceof IntakeError?error.code:'INTERNAL_ERROR',field:error.details?.field});else res.destroy();}
-    finally{if(counted)activeHandlers--;}
+    }catch(error) {if(!res.headersSent){if(error instanceof IntakeError&&error.status===503)res.setHeader('Retry-After','15');json(res,error instanceof IntakeError?error.status:500,{error:error instanceof IntakeError?error.code:'INTERNAL_ERROR',field:error.details?.field});}else res.destroy();}
+    finally{finishBackupRead?.();if(counted)activeHandlers--;}
   });
   server.requestTimeout=10_000;server.headersTimeout=10_000;
   if(boundary.hosted){server.maxConnections=32;server.maxHeadersCount=50;server.setTimeout(30_000,socket=>socket.destroy());}
@@ -427,7 +501,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   const suspendQueues=()=>{const releases=[photoQueue.suspend(),productQueue.suspend(),serviceQueue.suspend()];let released=false;return ()=>{if(released)return;released=true;for(const release of releases)release();};};
   const waitIdle=async code=>{
     const end=Date.now()+30_000;
-    while(!startupSettled||activeHandlers||activeArchives||pumps.size||photoQueue.status().running||productQueue.status().running||serviceQueue.status().active){
+    while(!startupSettled||activeHandlers||activeArchives||backupReadResponses||pumps.size||photoQueue.status().running||productQueue.status().running||serviceQueue.status().active){
       if(Date.now()>end)throw Error(code);await new Promise(r=>setTimeout(r,25));
     }
     if(startupFailure)throw Error('WORKER_STARTUP_DRAIN_FAILED');
@@ -441,19 +515,21 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   };
   server.pauseHeavyResources=()=>{
     if(!boundary.hosted||heavyPaused||closing)throw Error('BACKUP_RESOURCE_DRAIN_UNAVAILABLE');
-    heavyPaused=true;const release=suspendQueues();let released=false;
+    revokeBackupReads();heavyPaused=true;const release=suspendQueues();let released=false;
     return {waitOwned:async()=>{await Promise.all([photoQueue.waitForCurrentWork(),productQueue.waitForCurrentWork(),serviceQueue.waitForCurrentWork(),...pumps.values()]);},
-      drain:()=>waitIdle('BACKUP_RESOURCE_DRAIN_TIMEOUT'),resume:()=>{if(released||closing)return;released=true;release();heavyPaused=false;}};
+      drain:()=>waitIdle('BACKUP_RESOURCE_DRAIN_TIMEOUT'),resume:()=>{if(released||closing)return;released=true;revokeBackupReads();release();heavyPaused=false;}};
   };
+  server.enableBackupReadOnly=()=>{if(!boundary.hosted||!customerAccess||closing||!heavyPaused||backupPaused)throw Error('BACKUP_READ_MODE_UNAVAILABLE');backupReadGeneration++;backupReadOnlyActive=true;};
+  server.revokeBackupReadOnly=revokeBackupReads;
   server.pauseForBackup=async()=>{
     if(!boundary.hosted||backupPaused||closing)throw Error('BACKUP_DRAIN_UNAVAILABLE');
-    backupPaused=true;const resume=suspendQueues();
+    revokeBackupReads();backupPaused=true;const resume=suspendQueues();
     try{await waitIdle('BACKUP_DRAIN_TIMEOUT');}
     catch(e){/* Fail closed: an uncertain drain must not reopen admission. */throw e;}
     let released=false;return ()=>{if(released||closing)return;released=true;resume();backupPaused=false;};
   };
-  server.drainWorkers=async()=>{closing=true;await startup;await Promise.allSettled([...pumps.values(),photoQueue.stop(),productQueue.stop(),serviceQueue.stop()]);while(activeHandlers||activeArchives)await new Promise(r=>setTimeout(r,25));};
-  server.resourceStatus=()=>({heavyPaused,backupPaused,preparationPaused,activeHandlers,activeArchives,pumps:pumps.size,startupSettled,startupFailed:Boolean(startupFailure)});
+  server.drainWorkers=async()=>{revokeBackupReads();closing=true;await startup;await Promise.allSettled([...pumps.values(),photoQueue.stop(),productQueue.stop(),serviceQueue.stop()]);while(activeHandlers||activeArchives||backupReadResponses)await new Promise(r=>setTimeout(r,25));};
+  server.resourceStatus=()=>({heavyPaused,backupPaused,preparationPaused,activeHandlers,activeArchives,pumps:pumps.size,startupSettled,startupFailed:Boolean(startupFailure),backupReadOnlyActive,backupPrivateReaders,backupReadResponses});
   // Trusted local lifecycle handle; this is never exposed through HTTP.
   server.photoReviewQueue=photoQueue;
   server.productProductionQueue=productQueue;

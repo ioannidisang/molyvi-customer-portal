@@ -1,10 +1,39 @@
 'use strict';
 let workspace=null,current='business',dirty=false,busy=false,pending=null,navSignature='',customerCsrf=null;
 const $=id=>document.getElementById(id);
+let backupReadOnly=false,backupRecoveryPending=false;
+const backupReadMessage='Δημιουργούμε ένα ασφαλές αντίγραφο του έργου σου. Προσωρινά βλέπεις μόνο τις βασικές πληροφορίες. Αλλαγές, φωτογραφίες και λήψεις θα επιστρέψουν αυτόματα. Όσα έχεις γράψει παραμένουν στη σελίδα· μην την ανανεώσεις.';
+const backupReadPaths=new Set(['/api/service-config','/api/customer/me','/api/workspace']);
+const backupPausedErrors=new Set(['BACKUP_RESOURCES_IN_PROGRESS','BACKUP_SNAPSHOT_IN_PROGRESS','BACKUP_READ_TEMPORARILY_UNAVAILABLE']);
+const backupControls=new Map(),backupLinks=new Map(),backupImages=new Map();
+function applyBackupReadOnly(){
+  if(!document.querySelectorAll)return;
+  let banner=$('backup-readonly-notice');
+  if(backupReadOnly&&!banner){banner=element('p',backupReadMessage,{id:'backup-readonly-notice',role:'status',class:'note'});document.querySelector?.('main')?.prepend(banner);}
+  if(banner)banner.hidden=!backupReadOnly;
+  for(const control of document.querySelectorAll('button,input,select,textarea')){
+    const allowed=['cancel-confirm','close-viewer'].includes(control.id)||(!dirty&&control.hasAttribute('data-backup-navigation'));
+    if(backupReadOnly&&!allowed){if(!backupControls.has(control)||!control.disabled)backupControls.set(control,control.disabled);if(!control.disabled)control.disabled=true;}
+    else if(backupControls.has(control)){control.disabled=backupControls.get(control);backupControls.delete(control);}
+  }
+  for(const link of document.querySelectorAll('a')){
+    const href=link.getAttribute('href')??backupLinks.get(link);
+    if(backupReadOnly&&(dirty||!['/','/customer/','/workspace/'].includes(href))){if(href&&!backupLinks.has(link))backupLinks.set(link,href);if(link.hasAttribute('href'))link.removeAttribute('href');link.setAttribute('aria-disabled','true');}
+    else if(backupLinks.has(link)){link.setAttribute('href',backupLinks.get(link));link.removeAttribute('aria-disabled');backupLinks.delete(link);}
+  }
+  for(const img of document.querySelectorAll('img')){
+    if(backupReadOnly){if(!backupImages.has(img))backupImages.set(img,{src:img.getAttribute('src'),hidden:img.hidden});if(img.hasAttribute('src'))img.removeAttribute('src');img.hidden=true;}
+    else if(backupImages.has(img)){const saved=backupImages.get(img);if(saved.src)img.setAttribute('src',saved.src);img.hidden=saved.hidden;backupImages.delete(img);}
+  }
+  for(const map of [backupControls,backupLinks,backupImages])for(const control of map.keys())if(control.isConnected===false)map.delete(control);
+}
+function setBackupReadOnly(value){const next=value===true;if(backupReadOnly&&!next)backupRecoveryPending=true;backupReadOnly=next;applyBackupReadOnly();}
+function backupReadError(){const error=new Error(backupReadMessage);error.code='BACKUP_RESOURCES_IN_PROGRESS';return error;}
+if(typeof MutationObserver==='function'&&document.body)new MutationObserver(()=>applyBackupReadOnly()).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled']});
 const names={draft:'Δεν έχει υποβληθεί',skipped:'Για αργότερα',preflight_queued:'Ξεκινά ο έλεγχος',preflight_running:'Ελέγχουμε τα στοιχεία',waiting_dependencies:'Περιμένει προηγούμενα βήματα',queued:'Έτοιμο για επεξεργασία',running:'Σε επεξεργασία',result_ready:'Το αποτέλεσμα αποθηκεύτηκε',awaiting_approval:'Περιμένει έγκρισή σου',completed:'Ολοκληρώθηκε στη δοκιμή',failed:'Χρειάζεται έλεγχος',paused_unknown:'Παύση για έλεγχο',paused_budget:'Παύση κόστους'};
 const taskLabel=status=>workspace?.servicePayment&&['preflight_queued','queued'].includes(status)?'Το βήμα αποθηκεύτηκε στην ουρά':names[status]??'Σε αναμονή';
 const errors={PREPARATION_IN_PROGRESS:'Το κατάστημα βρίσκεται σε προετοιμασία. Μπορείς να παρακολουθείς την πρόοδό του· οι αλλαγές θα είναι διαθέσιμες όταν ολοκληρωθεί ο έλεγχος.',SESSION_REQUIRED:'Άνοιξε μια δοκιμαστική παραγγελία για να ξεκινήσεις.',INPUT_INCOMPLETE:'Μια μικρή λεπτομέρεια ακόμη: συμπλήρωσε το πεδίο πριν την οριστική υποβολή.',DRAFT_CONFLICT:'Υπάρχει νεότερη αποθήκευση. Κράτησε αντίγραφο των αλλαγών σου και ανανέωσε πριν συνεχίσεις.',TASK_LOCKED:'Το βήμα έχει ήδη υποβληθεί οριστικά.',INVALID_NUMBER:'Έλεγξε τιμή και απόθεμα. Χρησιμοποίησε τελεία για δεκαδικά.',ADDON_REQUIRED:'Η δημιουργία logo χρειάζεται αγορασμένο πρόσθετο branding.',EXCLUSIVE_CHOICE:'Επίλεξε συγκεκριμένο κοινό ή «Δεν γνωρίζω ακόμη».',SCHEMA_VERSION_STALE:'Αυτό το δοκιμαστικό έργο ανήκει στην προηγούμενη έκδοση. Άνοιξε μια νέα δοκιμαστική παραγγελία.'};
-async function api(url,payload){const response=await fetch(url,payload?{method:'POST',headers:{'Content-Type':'application/json',...(customerCsrf?{'X-Molyvi-Csrf':customerCsrf}:{})},body:JSON.stringify(payload)}:{cache:'no-store'});const data=await response.json();if(!response.ok){const error=new Error(errors[data.error]??'Η ενέργεια δεν ολοκληρώθηκε. Προσπάθησε ξανά.');error.code=data.error;error.field=data.field;throw error;}return data;}
+async function api(url,payload){if(backupReadOnly&&(payload||!backupReadPaths.has(url)))throw backupReadError();const response=await fetch(url,payload?{method:'POST',headers:{'Content-Type':'application/json',...(customerCsrf?{'X-Molyvi-Csrf':customerCsrf}:{})},body:JSON.stringify(payload)}:{cache:'no-store'});const data=await response.json();if(!response.ok){if(backupPausedErrors.has(data.error)){setBackupReadOnly(true);throw backupReadError();}const error=new Error(errors[data.error]??'Η ενέργεια δεν ολοκληρώθηκε. Προσπάθησε ξανά.');error.code=data.error;error.field=data.field;throw error;}if(!payload&&backupReadPaths.has(url))setBackupReadOnly(data.backupReadOnly===true);return data;}
 function element(tag,text,attrs={}){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;for(const [key,value]of Object.entries(attrs))node.setAttribute(key,value);return node;}
 function notice(message){$('notice').textContent=message;}
 let walletSignature='';
@@ -67,12 +96,12 @@ function renderNavigation(){
   $('progress').textContent=`Κοινά βήματα: ${submitted}/${workspace.tasks.length-1} · Υποβλημένα προϊόντα: ${submittedProducts}`;
   $('steps').replaceChildren();$('remaining').replaceChildren();
   workspace.tasks.forEach((task,index)=>{
-    const button=element('button',`${String(index+1).padStart(2,'0')}  ${task.title}`,{type:'button'});
+    const button=element('button',`${String(index+1).padStart(2,'0')}  ${task.title}`,{type:'button','data-backup-navigation':''});
     button.classList.toggle('active',task.id===current);
     if(task.id===current)button.setAttribute('aria-current','step');
     button.append(element('small',task.id==='catalog'&&products.length?`Υποβλήθηκαν: ${submittedProducts}/${products.length}`:taskLabel(task.status)));
     button.addEventListener('click',()=>navigate(task.id));$('steps').append(button);
-    if(!task.submission&&(task.id!=='catalog'||!products.length||products.some(product=>!product.submission))){const li=element('li');const link=element('button',task.id==='catalog'&&products.length?`${task.title} · Εκκρεμότητες: ${products.length-submittedProducts}`:task.title,{type:'button'});link.addEventListener('click',()=>navigate(task.id));li.append(link);$('remaining').append(li);}
+    if(!task.submission&&(task.id!=='catalog'||!products.length||products.some(product=>!product.submission))){const li=element('li');const link=element('button',task.id==='catalog'&&products.length?`${task.title} · Εκκρεμότητες: ${products.length-submittedProducts}`:task.title,{type:'button','data-backup-navigation':''});link.addEventListener('click',()=>navigate(task.id));li.append(link);$('remaining').append(li);}
   });
   if(submitted===workspace.tasks.length)$('remaining').append(element('li','Όλα τα βήματα υποβλήθηκαν.'));
 }
@@ -293,7 +322,7 @@ function render({preserveContentPreview=false}={}){
     return;
   }
   if(!workspace)return;
-  $('welcome').hidden=true;$('workspace').hidden=false;renderNavigation();renderWallet();renderServiceOffer();renderProductProduction();void globalThis.MolyviBasicPreparation?.refresh(workspace.id);
+  $('welcome').hidden=true;$('workspace').hidden=false;renderNavigation();renderWallet();renderServiceOffer();renderProductProduction();if(!backupReadOnly)void globalThis.MolyviBasicPreparation?.refresh(workspace.id);
   const task=workspace.tasks.find(task=>task.id===current),card=$('card');
   const previousPreview=preserveContentPreview&&!dirty?card.querySelector('.content-preview'):null;
   const retainedPreview=previousPreview?.sourceKey===contentPreviewKey(workspace,current)?previousPreview:null;
@@ -514,6 +543,6 @@ async function photoClaimAction(value){
   }catch(error){notice(error.message);return false;}finally{busy=false;controls.forEach(({node,disabled})=>{if(node.isConnected)node.disabled=disabled;});}
 }
 $('submit-confirm').addEventListener('click',()=>{const value=pending;$('confirm').close();pending=null;if(value?.kind==='product')productAction('productFinal',value.product.id,value);else if(value)command({...value,acknowledged:true});});
-async function refresh(){if(busy)return;const previousId=workspace?.id;try{const state=await api('/api/workspace');if(busy||workspace?.id!==previousId)return;if(state.servicePayment?.status==='pending'||workspace?.servicePayment?.status==='pending'){workspace=state;render();return;}const oldPreviewKey=contentPreviewKey(workspace,current),old=workspace?.tasks.find(task=>task.id===current),oldTexts=JSON.stringify(workspace?.productTexts),oldProducts=JSON.stringify(workspace?.productTasks),oldGalleries=JSON.stringify(workspace?.productGalleries),oldClaims=JSON.stringify(workspace?.photoClaims);workspace=state;renderWallet();renderServiceOffer();void globalThis.MolyviBasicPreparation?.refresh(workspace.id);if(!old){render();return;}renderNavigation();const updated=workspace.tasks.find(task=>task.id===current);if(!dirty && !$('confirm').open && !$('photo-viewer').open && (oldPreviewKey!==contentPreviewKey(workspace,current)||JSON.stringify(old)!==JSON.stringify(updated)||current==='catalog'&&(oldTexts!==JSON.stringify(state.productTexts)||oldProducts!==JSON.stringify(state.productTasks)||oldGalleries!==JSON.stringify(state.productGalleries)||oldClaims!==JSON.stringify(state.photoClaims))))render({preserveContentPreview:true});}catch(error){if(error.code!=='SESSION_REQUIRED')notice(error.message);}}
-async function initialize(){try{const config=await api('/api/service-config');globalThis.MolyviBasicPreparation?.configure({enabled:config.basicPreparationEnabled,api,context:()=>workspace});$('start').hidden=!config.allowDemoOrders;$('demo-note').hidden=!config.allowDemoOrders;$('service-payment').hidden=!config.servicePayments;if(config.deploymentMode==='hosted_staging'){$('environment-label').textContent='Δοκιμαστικό έργο';$('environment-note').textContent='Ο ιδιωτικός χώρος της δοκιμής σου. Τα υποβλημένα βήματα και τα αποτελέσματά τους διατηρούνται στο ίδιο έργο. Η επεξεργασία AI ενεργοποιείται ελεγχόμενα από την ομάδα Molyvi.';}if(config.customerAccess){try{customerCsrf=(await api('/api/customer/me')).csrfToken;$('customer-home').hidden=false;}catch{location.assign('/customer/');return;}}if(config.servicePayments?.checkoutConfigured)$('service-checkout-note').textContent='Δοκιμαστική αγορά στο εξουσιοδοτημένο development store, χωρίς πραγματική χρέωση. Η παραγωγική είσπραξη και η φορολογική της ρύθμιση παραμένουν προς ενεργοποίηση.';}catch{/* Existing static preview remains a local demo. */}await refresh();}
+async function refresh(){if(busy)return;const previousId=workspace?.id;try{const state=await api('/api/workspace');if(busy||workspace?.id!==previousId)return;if(backupRecoveryPending&&!backupReadOnly){const config=await api('/api/service-config');globalThis.MolyviBasicPreparation?.configure({enabled:config.basicPreparationEnabled,api,context:()=>workspace});if(config.customerAccess)customerCsrf=(await api('/api/customer/me')).csrfToken;backupRecoveryPending=false;}if(backupReadOnly&&dirty){applyBackupReadOnly();return;}if(state.servicePayment?.status==='pending'||workspace?.servicePayment?.status==='pending'){workspace=state;render();return;}const oldPreviewKey=contentPreviewKey(workspace,current),old=workspace?.tasks.find(task=>task.id===current),oldTexts=JSON.stringify(workspace?.productTexts),oldProducts=JSON.stringify(workspace?.productTasks),oldGalleries=JSON.stringify(workspace?.productGalleries),oldClaims=JSON.stringify(workspace?.photoClaims);workspace=state;renderWallet();renderServiceOffer();if(!backupReadOnly)void globalThis.MolyviBasicPreparation?.refresh(workspace.id);if(!old){render();return;}renderNavigation();const updated=workspace.tasks.find(task=>task.id===current);if(!dirty && !$('confirm').open && !$('photo-viewer').open && (oldPreviewKey!==contentPreviewKey(workspace,current)||JSON.stringify(old)!==JSON.stringify(updated)||current==='catalog'&&(oldTexts!==JSON.stringify(state.productTexts)||oldProducts!==JSON.stringify(state.productTasks)||oldGalleries!==JSON.stringify(state.productGalleries)||oldClaims!==JSON.stringify(state.photoClaims))))render({preserveContentPreview:true});applyBackupReadOnly();}catch(error){if(error.code!=='SESSION_REQUIRED')notice(error.message);}}
+async function initialize(){try{const config=await api('/api/service-config');globalThis.MolyviBasicPreparation?.configure({enabled:config.basicPreparationEnabled,api,context:()=>workspace});$('start').hidden=!config.allowDemoOrders;$('demo-note').hidden=!config.allowDemoOrders;$('service-payment').hidden=!config.servicePayments;if(config.deploymentMode==='hosted_staging'){$('environment-label').textContent='Δοκιμαστικό έργο';$('environment-note').textContent='Ο ιδιωτικός χώρος της δοκιμής σου. Τα υποβλημένα βήματα και τα αποτελέσματά τους διατηρούνται στο ίδιο έργο. Η επεξεργασία AI ενεργοποιείται ελεγχόμενα από την ομάδα Molyvi.';}if(config.customerAccess){try{customerCsrf=(await api('/api/customer/me')).csrfToken;$('customer-home').hidden=false;}catch(error){if(error.code==='SESSION_REQUIRED'){location.assign('/customer/');return;}throw error;}}if(config.servicePayments?.checkoutConfigured)$('service-checkout-note').textContent='Δοκιμαστική αγορά στο εξουσιοδοτημένο development store, χωρίς πραγματική χρέωση. Η παραγωγική είσπραξη και η φορολογική της ρύθμιση παραμένουν προς ενεργοποίηση.';}catch(error){if(backupPausedErrors.has(error.code))notice(error.message);}await refresh();}
 initialize();setInterval(refresh,1000);

@@ -1,3 +1,4 @@
+import {hostedBackupReadView} from './lib/hosted-backup-read-view.mjs';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
@@ -25,8 +26,9 @@ import {loadHostedMemoryProbe,runHostedMemoryProbe} from './operations/r2-backup
 import {loadHostedGenerationProbe,runHostedGenerationProbe} from './operations/r2-backup/hosted-generation-probe.mjs';
 import {runCanonicalMigrationStartup} from './operations/canonical-migration-startup.mjs';
 
-export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller=null,basicPipelinePermit=null,deferBackgroundStart=false}={}){
+export async function createHostedCustomerServer({publicOrigin,healthHosts=[],storage=path.join(PRIVATE_ROOT,'molyvi-hosted-staging'),transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller=null,basicPipelinePermit=null,deferBackgroundStart=false,backupReadOnly=false}={}){
   if(typeof deferBackgroundStart!=='boolean')throw Error('HOSTED_BACKGROUND_START_CONFIG');
+  if(typeof backupReadOnly!=='boolean')throw Error('HOSTED_BACKUP_READ_CONFIG');
   createRequestBoundary({publicOrigin,healthHosts});
   const accounts=await new CustomerStore(path.join(storage,'accounts')).ready();let server,themeRechecks,basicPipeline;
   try{
@@ -93,7 +95,7 @@ export async function createHostedCustomerServer({publicOrigin,healthHosts=[],st
       themeRechecks?.start();basicInstaller?.start();basicPipeline?.start();
     };
     server.on('listening',()=>{if(!deferBackgroundStart)startBackground();});
-    const stop=()=>stopPromise??=(async()=>{stopping=true;clearInterval(interval);await resources.stop();themeRechecks?.pause();basicInstaller?.pause();server.closeIdleConnections();await Promise.all([server.drainWorkers(),themeRechecks?.stop(),basicInstaller?.stop(),basicPipeline?.stop()]);if(server.listening)await new Promise(r=>server.close(r));await active;accounts.close();})();
+    const stop=()=>stopPromise??=(async()=>{stopping=true;server.revokeBackupReadOnly();clearInterval(interval);await resources.stop();themeRechecks?.pause();basicInstaller?.pause();server.closeIdleConnections();await Promise.all([server.drainWorkers(),themeRechecks?.stop(),basicInstaller?.stop(),basicPipeline?.stop()]);if(server.listening)await new Promise(r=>server.close(r));await active;accounts.close();})();
     server.on('close',()=>{clearInterval(interval);void themeRechecks?.stop();void basicInstaller?.stop();void basicPipeline?.stop();});
     const withBackupResources=fn=>{
       if(!server.listening)throw Error('BACKUP_APPLICATION_NOT_LISTENING');
@@ -103,9 +105,12 @@ export async function createHostedCustomerServer({publicOrigin,healthHosts=[],st
       if(typeof fn!=='function')throw Error('BACKUP_SNAPSHOT_CALLBACK_REQUIRED');
       const snapshot=async()=>{
         if(backupPaused)throw Error('BACKUP_SNAPSHOT_ALREADY_ACTIVE');
-        backupPaused=true;let resume;
-        try{resume=await server.pauseForBackup();await active;return await fn();}
-        finally{resume?.();backupPaused=false;}
+        backupPaused=true;let resume,verified=false;
+        try{resume=await server.pauseForBackup();await active;const value=await fn();verified=true;return value;}
+        finally{
+          resume?.();backupPaused=false;
+          if(verified&&backupReadOnly&&!stopping&&resources.ownsBackup())server.enableBackupReadOnly();
+        }
       };
       return resources.ownsBackup()?snapshot():withBackupResources(snapshot);
     };
@@ -164,6 +169,7 @@ export function createHostedStartupLifecycle({app,backups=null,probeConfig=null,
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   if(process.env.MOLYVI_HOSTED_ENABLED!=='true')throw Error('HOSTED_ACTIVATION_REQUIRED');
+  const backupReadOnly=hostedBackupReadView(process.env.MOLYVI_BACKUP_READ_ONLY_ENABLED);
   for(const flag of ['MOLYVI_PAYMENT_RECEIVER_ENABLED','MOLYVI_AI_WORKERS_ENABLED','MOLYVI_BACKUP_UPLOAD_ENABLED'])if(process.env[flag]==='true')throw Error('HOSTED_STAGING_SCOPE_REQUIRED');
   const port=Number(process.env.PORT??10000);if(!Number.isInteger(port)||port<1||port>65535||[18012,18013,19099].includes(port))throw Error('INVALID_PORT');
   const storage=process.env.MOLYVI_PRIVATE_STORAGE??path.join(PRIVATE_ROOT,'molyvi-hosted-staging');let transport;
@@ -172,8 +178,11 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   const legacyProbeConfig=await loadHostedMemoryProbe({permitFile:path.join(probeRoot,'permit.json'),source:storage,probeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
   const generationProbeRoot='/opt/render/project/src/briefs/molyvi-generation-memory-probe-20261020-r1';
   const generationProbeConfig=await loadHostedGenerationProbe({permitFile:path.join(generationProbeRoot,'permit.json'),source:storage,probeRoot:generationProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
-  if(legacyProbeConfig&&generationProbeConfig)throw Error('HOSTED_MULTIPLE_PROBES_FORBIDDEN');
-  const probeConfig=generationProbeConfig??legacyProbeConfig;
+  // A distinct one-use proof; completed historical probes are never rearmed.
+  const combinedProbeRoot='/opt/render/project/src/briefs/molyvi-generation-combined-probe-20261021-r1';
+  const combinedProbeConfig=await loadHostedGenerationProbe({permitFile:path.join(combinedProbeRoot,'permit.json'),source:storage,probeRoot:combinedProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
+  if([legacyProbeConfig,generationProbeConfig,combinedProbeConfig].filter(Boolean).length>1)throw Error('HOSTED_MULTIPLE_PROBES_FORBIDDEN');
+  const probeConfig=combinedProbeConfig??generationProbeConfig??legacyProbeConfig;
   if(process.env.MOLYVI_REAL_EMAIL_ENABLED==='true'){
     if(process.env.MOLYVI_GMAIL_ACCOUNT_VERIFIED!=='true')throw Error('GMAIL_ACCOUNT_VERIFICATION_REQUIRED');
     const getAccessToken=createGoogleMailTokenProvider({clientId:process.env.MOLYVI_GOOGLE_CLIENT_ID,clientSecret:process.env.MOLYVI_GOOGLE_CLIENT_SECRET,refreshToken:process.env.MOLYVI_GOOGLE_REFRESH_TOKEN});
@@ -192,7 +201,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   // An explicit real permit never falls back to the historical synthetic job.
   if(!basicInstaller&&!basicInstallerStartupBlocked&&!basicPipelinePermit&&!basicPipelineStartupBlocked)try{themeRecheckConfig=await loadHostedThemeRecheckActivation();}catch{themeRecheckStartupBlocked=true;console.error('MOLYVI_THEME_RECHECK_STARTUP_BLOCKED');}
   if(probeConfig&&([controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig].some(Boolean)||(basicInstaller&&basicInstaller.status().phase!=='verified')||basicPipelineStartupBlocked||basicInstallerStartupBlocked||themeRecheckStartupBlocked))throw Error('HOSTED_MEMORY_PROBE_STARTUP_NOT_SETTLED');
-  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller,basicPipelinePermit,deferBackgroundStart:Boolean(probeConfig)});
+  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller,basicPipelinePermit,deferBackgroundStart:Boolean(probeConfig),backupReadOnly:backupReadOnly||Boolean(combinedProbeConfig)});
   await fs.writeFile(path.join(storage,'hosted-scope.json'),JSON.stringify({mode:'hosted_staging',realEmailEnabled:Boolean(transport),testPaymentsEnabled:Boolean(app.testPayments),controlledLocalProEnabled:Boolean(controlledProConfig),photoStartupOperationEnabled:Boolean(photoOperationConfig),operationsStartupEnabled:Boolean(operationsConfig),catalogExtensionEnabled:Boolean(catalogExtensionConfig),themeRecheckProbeConfigured:Boolean(themeRecheckConfig),themeRecheckStartupBlocked,shopifyInstallerWorkerEnabled:Boolean(basicInstaller),basicInstallerStartupBlocked,basicPipelineConfigured:Boolean(app.basicPipeline),basicPipelineStartupBlocked,aiWorkersEnabled:false,realPaymentsEnabled:false,cloudArchiveActive:false})+'\n',{mode:0o600});
   let backups;
   try{backups=await createAutomaticBackups({storage,release:process.env.RENDER_GIT_COMMIT,quietSnapshot:app.quietSnapshot,withBackupResources:app.withBackupResources,transport});}
@@ -201,7 +210,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     if(probeConfig){await app.stop();throw Error('HOSTED_MEMORY_PROBE_AUTOMATIC_SETUP_FAILED');}
     await reportBackupStartupFailure(transport);
   }
-  const startup=createHostedStartupLifecycle({app,backups,probeConfig,runProbe:generationProbeConfig?runHostedGenerationProbe:runHostedMemoryProbe,onBlocked:code=>console.error(code)});
+  const startup=createHostedStartupLifecycle({app,backups,probeConfig,runProbe:(generationProbeConfig||combinedProbeConfig)?runHostedGenerationProbe:runHostedMemoryProbe,onBlocked:code=>console.error(code)});
   const shutdown=()=>{void startup.stop().then(()=>process.exit(0),()=>{console.error('MOLYVI_HOSTED_SHUTDOWN_FAILED');process.exit(1);});};
   process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);
   if(probeConfig)app.server.prependOnceListener('listening',()=>{void startup.start();});

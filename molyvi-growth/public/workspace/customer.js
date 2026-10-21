@@ -1,6 +1,35 @@
 'use strict';
 let account=null,busy=false,codeRequests=false,realEmailEnabled=false;
 const $=id=>document.getElementById(id);
+let backupReadOnly=false;
+const backupReadMessage='Δημιουργούμε ένα ασφαλές αντίγραφο του έργου σου. Προσωρινά βλέπεις μόνο τις βασικές πληροφορίες. Αλλαγές, φωτογραφίες και λήψεις θα επιστρέψουν αυτόματα. Όσα έχεις γράψει παραμένουν στη σελίδα· μην την ανανεώσεις.';
+const backupReadPaths=new Set(['/api/service-config','/api/customer/me','/api/workspace']);
+const backupPausedErrors=new Set(['BACKUP_RESOURCES_IN_PROGRESS','BACKUP_SNAPSHOT_IN_PROGRESS','BACKUP_READ_TEMPORARILY_UNAVAILABLE']);
+const backupControls=new Map(),backupLinks=new Map(),backupImages=new Map();
+function applyBackupReadOnly(){
+  if(!document.querySelectorAll)return;
+  let banner=$('backup-readonly-notice');
+  if(backupReadOnly&&!banner){banner=node('p',backupReadMessage,{id:'backup-readonly-notice',role:'status',class:'card'});document.querySelector?.('main')?.prepend(banner);}
+  if(banner)banner.hidden=!backupReadOnly;
+  for(const control of document.querySelectorAll('button,input,select,textarea')){
+    const selected=control.getAttribute('data-backup-project')===account?.selectedProjectId;
+    if(backupReadOnly&&!selected){if(!backupControls.has(control)||!control.disabled)backupControls.set(control,control.disabled);if(!control.disabled)control.disabled=true;}
+    else if(backupControls.has(control)){control.disabled=backupControls.get(control);backupControls.delete(control);}
+  }
+  for(const link of document.querySelectorAll('a')){
+    const href=link.getAttribute('href')??backupLinks.get(link);
+    if(backupReadOnly&&!['/','/customer/','/workspace/'].includes(href)){if(href&&!backupLinks.has(link))backupLinks.set(link,href);if(link.hasAttribute('href'))link.removeAttribute('href');link.setAttribute('aria-disabled','true');}
+    else if(backupLinks.has(link)){link.setAttribute('href',backupLinks.get(link));link.removeAttribute('aria-disabled');backupLinks.delete(link);}
+  }
+  for(const img of document.querySelectorAll('img')){
+    if(backupReadOnly){if(!backupImages.has(img))backupImages.set(img,{src:img.getAttribute('src'),hidden:img.hidden});if(img.hasAttribute('src'))img.removeAttribute('src');img.hidden=true;}
+    else if(backupImages.has(img)){const saved=backupImages.get(img);if(saved.src)img.setAttribute('src',saved.src);img.hidden=saved.hidden;backupImages.delete(img);}
+  }
+  for(const map of [backupControls,backupLinks,backupImages])for(const control of map.keys())if(control.isConnected===false)map.delete(control);
+}
+function setBackupReadOnly(value){backupReadOnly=value===true;applyBackupReadOnly();}
+function backupReadError(){const error=new Error(backupReadMessage);error.code='BACKUP_RESOURCES_IN_PROGRESS';return error;}
+if(typeof MutationObserver==='function'&&document.body)new MutationObserver(()=>applyBackupReadOnly()).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled']});
 const errors={INVALID_LOGIN:'Το email και ο κωδικός δεν ταιριάζουν ή ο κωδικός έχει ήδη χρησιμοποιηθεί. Χρησιμοποίησε έναν νέο κωδικό.',LOGIN_RATE_LIMIT:'Έγιναν αρκετές προσπάθειες. Περίμενε 15 λεπτά πριν δοκιμάσεις ξανά.',SESSION_REQUIRED:'Συνδέσου ξανά για να συνεχίσεις.',DELIVERY_VERSION_CHANGED:'Υπάρχει διαφορετική έκδοση του φακέλου. Ανανέωσε και έλεγξέ την πριν επιβεβαιώσεις.',DELIVERY_FILE_CHANGED:'Ο φάκελος χρειάζεται έλεγχο πριν συνεχίσεις.',CSRF_REQUIRED:'Ανανέωσε τη σελίδα πριν συνεχίσεις.'};
 Object.assign(errors,{INVALID_FEEDBACK:'Διάλεξε θέμα και γράψε την παρατήρησή σου, έως 2.000 χαρακτήρες.',FEEDBACK_REQUEST_CONFLICT:'Το αίτημα έχει ήδη καταγραφεί με διαφορετικά στοιχεία. Άνοιξε ξανά τις παρατηρήσεις πριν συνεχίσεις.',FEEDBACK_RATE_LIMIT:'Έχεις καταγράψει αρκετές παρατηρήσεις την τελευταία ώρα. Δοκίμασε ξανά αργότερα.',FEEDBACK_STORAGE_LIMIT:'Ο χώρος παρατηρήσεων αυτής της έκδοσης έχει συμπληρωθεί. Επικοινώνησε με την υποστήριξη.'});
 Object.assign(errors,{ADJUSTMENT_LIMIT_REACHED:'Έχουν ήδη εγκριθεί 5 μικρές προσαρμογές για αυτό το έργο. Ανανέωσε το ιστορικό.',ADJUSTMENT_PROPOSAL_STALE:'Υπάρχει νεότερη πρόταση ή απάντηση. Ανανέωσε το ιστορικό πριν εγκρίνεις.',ADJUSTMENT_PROPOSAL_CHANGED:'Η πρόταση χρειάζεται έλεγχο ακεραιότητας.',ADJUSTMENT_ACKNOWLEDGEMENT_REQUIRED:'Διάβασε την περιγραφή και επιβεβαίωσε την επιλογή σου πριν συνεχίσεις.'});
@@ -43,7 +72,7 @@ function reviewStatusPanel(data){
   box.append(node('p','Αυτός ο έλεγχος δεν αλλάζει τα αρχεία ή τις επιλογές σου και δεν καταγράφει τελική αποδοχή. Η εγκυρότητα των πολιτικών και η ενεργοποίηση πληρωμών ολοκληρώνονται από τον ιδιοκτήτη. Το κατάστημα παραμένει αδημοσίευτο.',{class:'muted'}));
   return box;
 }
-async function api(url,payload){const response=await fetch(url,payload?{method:'POST',headers:{'Content-Type':'application/json',...(account?{'X-Molyvi-Csrf':account.csrfToken}:{})},body:JSON.stringify(payload)}:{cache:'no-store'});const data=await response.json();if(!response.ok){const e=new Error(errors[data.error]??'Η ενέργεια δεν ολοκληρώθηκε. Προσπάθησε ξανά.');e.code=data.error;throw e;}return data;}
+async function api(url,payload){if(backupReadOnly&&(payload||!backupReadPaths.has(url)))throw backupReadError();const response=await fetch(url,payload?{method:'POST',headers:{'Content-Type':'application/json',...(account?{'X-Molyvi-Csrf':account.csrfToken}:{})},body:JSON.stringify(payload)}:{cache:'no-store'});const data=await response.json();if(!response.ok){if(backupPausedErrors.has(data.error)){setBackupReadOnly(true);throw backupReadError();}const e=new Error(errors[data.error]??'Η ενέργεια δεν ολοκληρώθηκε. Προσπάθησε ξανά.');e.code=data.error;throw e;}if(!payload&&backupReadPaths.has(url))setBackupReadOnly(data.backupReadOnly===true);return data;}
 function render(){
   $('login-panel').hidden=Boolean(account);$('account-panel').hidden=!account;$('logout').hidden=!account;
   $('operator-link').hidden=!account?.operatorAccess;
@@ -57,7 +86,7 @@ function render(){
   for(const p of account.projects){
     const card=node('article',undefined,{class:'card'}),head=node('div',undefined,{class:'project-title'}),title=node('div');
     title.append(node('h2',p.label),node('p',p.orderId,{class:'muted'}));head.append(title,node('span',p.deliveries.length?'Έτοιμος φάκελος ελέγχου':'Το έργο σου',{class:'status'}));card.append(head);
-    const actions=node('div',undefined,{class:'actions'}),open=node('button','Συνέχεια στο έργο →',{type:'button'});open.addEventListener('click',()=>run(async()=>{account=await api('/api/customer/select',{projectId:p.id});location.assign('/workspace/');}));actions.append(open);card.append(actions);
+    const actions=node('div',undefined,{class:'actions'}),open=node('button','Συνέχεια στο έργο →',{type:'button','data-backup-project':p.id});open.addEventListener('click',()=>run(async()=>{if(backupReadOnly){if(p.id!==account.selectedProjectId)throw backupReadError();location.assign('/workspace/');return;}account=await api('/api/customer/select',{projectId:p.id});location.assign('/workspace/');}));actions.append(open);card.append(actions);
     for(const [deliveryIndex,d] of p.deliveries.entries()){
       const section=node('section',undefined,{class:'delivery'}),base=`/customer-files/${d.id}/`;
       section.append(node('h3','Ο φάκελος του καταστήματός σου.'),node('p',`Έκδοση ${p.deliveries.length-deliveryIndex} · ${dateLabel(d.preparedAt)}`,{class:'muted'}),node('p','Οι φωτογραφίες, τα κείμενα και οι οδηγίες, συγκεντρωμένα σε μια συγκεκριμένη έκδοση.'));
@@ -78,9 +107,12 @@ function render(){
     }
     projects.append(card);
   }
+  applyBackupReadOnly();
 }
-async function run(fn){if(busy)return;busy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);$('message').textContent='';try{await fn();}catch(e){$('message').textContent=e.message;if(e.code==='SESSION_REQUIRED'){account=null;render();}}finally{busy=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+async function run(fn){if(busy)return;busy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);$('message').textContent='';try{await fn();}catch(e){$('message').textContent=e.message;if(e.code==='SESSION_REQUIRED'){account=null;render();}}finally{busy=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);applyBackupReadOnly();}}
 $('login-form').addEventListener('submit',e=>{e.preventDefault();run(async()=>{await api('/api/customer/login',{address:$('email').value.trim(),code:$('access-code').value.trim()});$('access-code').value='';account=await api('/api/customer/me');render();});});
 $('logout').addEventListener('click',()=>run(async()=>{await api('/api/customer/logout',{});account=null;render();$('message').textContent='Αποσυνδέθηκες. Το έργο και τα αρχεία σου παραμένουν αποθηκευμένα.';}));
 $('request-code').addEventListener('click',()=>{if(!$('email').reportValidity())return;run(async()=>{await api('/api/customer/request-code',{address:$('email').value.trim()});$('message').textContent=realEmailEnabled?'Αν υπάρχει λογαριασμός με αυτό το email, θα λάβεις τον προσωπικό κωδικό σου. Περίμενε ένα λεπτό πριν ζητήσεις ξανά.':'Η αποστολή email δεν είναι ακόμη ενεργή σε αυτή τη δοκιμή. Ο κωδικός προετοιμάζεται για τον εσωτερικό έλεγχο.';});});
 (async()=>{try{const config=await api('/api/service-config');codeRequests=config.customerCodeRequests;realEmailEnabled=config.realEmailEnabled;account=await api('/api/customer/me');}catch(e){if(e.code!=='SESSION_REQUIRED')$('message').textContent=e.message;}render();})();
+async function refreshBackupState(){if(busy)return;try{if(!account){const config=await api('/api/service-config');codeRequests=config.customerCodeRequests;realEmailEnabled=config.realEmailEnabled;render();applyBackupReadOnly();return;}const wasBackup=backupReadOnly,latest=await api('/api/customer/me');if(account)account={...account,selectedProjectId:latest.selectedProjectId};if(wasBackup&&!backupReadOnly){const config=await api('/api/service-config');codeRequests=config.customerCodeRequests;realEmailEnabled=config.realEmailEnabled;}applyBackupReadOnly();}catch(error){if(backupPausedErrors.has(error.code))$('message').textContent=error.message;}}
+if(typeof setInterval==='function')setInterval(refreshBackupState,15000);
