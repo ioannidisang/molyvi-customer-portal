@@ -1,3 +1,4 @@
+import {authorizeReviewedBasicSourceRemount} from './basic-source-retention.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -43,6 +44,7 @@ export async function createHostedBasicReferencePipeline({permit,store,storage,a
  if(reviewedResume)need(hash(reviewedResume)===permit.resumeSha256,'RESUME_REVIEW_CHANGED');
  const session={projectId:permit.projectId,ownerId:permit.ownerId},receipts=ROOT+'/receipts',buildRoot=ROOT+'/builds',directory=ROOT+'/journal',registryDirectory=ROOT+'/registry';
  need(storage===path.dirname(path.dirname(ROOT))&&typeof acquireLease==='function','RUNTIME_SCOPE');
+ if(permit.remountSha256){const review=await read(CONTROL+'/remount.json');need(hash(review)===permit.remountSha256&&review.sourceHash===permit.sourceHash&&review.directory===store.storage+'/'+permit.projectId,'REMOUNT_REVIEW');await authorizeReviewedBasicSourceRemount(review);}
  const authority=await createReferencePipelineAuthority({permit,store,storage:receipts,buildRoot});
  const decodeImage=createIsolatedShopifyImageDecoder();
  const preparation=await createBasicPreparationService({store,storage:receipts,buildRoot,buildEnabled:true,referenceComposition:true,decodeImage,hostedReferenceAuthority:authority});
@@ -72,7 +74,7 @@ export async function createHostedBasicReferencePipeline({permit,store,storage,a
  const service=Object.freeze({
   status:s=>belongs(s)?preparation.status(s):legacy.status(s),
   request:async(s,c)=>{need(belongs(s)&&!claim&&!complete,'REQUEST_SCOPE');window();await current();return preparation.request(s,c);},
-  prepare:async(s,c)=>{need(belongs(s)&&activeLease,'PREPARATION_LEASE');guard();await current();stage='preparing';return preparation.prepare(s,c);},
+  prepare:async(s,c)=>{need(belongs(s)&&activeLease,'PREPARATION_LEASE');guard();await current();stage='preparing';try{return await preparation.prepare(s,c);}catch(e){failure=/^[A-Z0-9_]{1,100}$/.test(e.code??'')?e.code:'BASIC_REFERENCE_PREPARATION_STOPPED';await save(CONTROL+'/preparation-failure.json',{code:failure,at:new Date().toISOString(),automaticReplay:false});throw e;}},
   loadPrepared:async(s,c)=>{need(belongs(s)&&activeLease,'PREPARATION_LEASE');guard();await current();return preparation.loadPrepared(s,c);}
  });
  const worker=createBasicPreparationWorker({enabled:!complete&&!claim,permit:{projectId:session.projectId,ownerHash:hash(session.ownerId)},preparationService:service,

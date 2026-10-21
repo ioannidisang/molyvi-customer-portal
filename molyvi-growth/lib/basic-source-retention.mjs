@@ -10,6 +10,7 @@ import {canonicalJson,IntakeError} from './intake-store.mjs';
 export const BASIC_SOURCE_RETENTION_BYTES_CAP=1024*1024;
 const FILE_CAP=256*1024,ANCHOR='.basic-source-retention.json',ROOT='.basic-source-retention',LOCK='.basic-source-gate';
 const context=new AsyncLocalStorage();
+const reviewedRemounts=new Map();
 const hash=value=>crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
 const same=(a,b)=>canonicalJson(a)===canonicalJson(b);
 const fail=code=>{throw new IntakeError(`BASIC_SOURCE_RETENTION_${code}`,422);};
@@ -56,6 +57,8 @@ export function validateBasicSourceRetentionDescriptor(value){
 }
 export function makeBasicSourceRetentionDescriptor({directory,recordHash,plan,assets,verified}){
   const body={schemaVersion:1,kind:'molyvi_basic_source_pin',sourceDirectory:directory,projectId:plan.projectId,ownerHash:plan.binding.ownerHash,recordHash,planHash:plan.planHash,selectionHash:hash(assets),files:[...verified.values()].map(item=>({fileName:item.fileName,assetId:item.asset.id,kind:item.kind,bytes:item.asset.bytes,sha256:item.asset.sha256,mime:item.asset.mime,stat:pin(item.stat)}))};
+  const remount=reviewedRemounts.get(directory);
+  if(remount){for(const file of body.files){if(file.stat.dev!==remount.currentDev)fail('REMOUNT_CHANGED');file.stat.dev=remount.originalDev;}if(hash(body)!==remount.descriptorHash)fail('REMOUNT_CHANGED');}
   return freeze(validateBasicSourceRetentionDescriptor({...body,descriptorHash:hash(body)}));
 }
 async function state(directory){
@@ -105,7 +108,8 @@ async function currentFiles(descriptor){
   if(record.id!==descriptor.projectId||hash(record.ownerId)!==descriptor.ownerHash||hash(record)!==descriptor.recordHash)fail('SOURCE_CHANGED');
   for(const file of descriptor.files){
     const stat=await fs.lstat(path.join(descriptor.sourceDirectory,file.fileName),{bigint:true});
-    if(!stat.isFile()||stat.isSymbolicLink()||!same(pin(stat),file.stat))fail('SOURCE_CHANGED');
+    const actual=pin(stat),remount=reviewedRemounts.get(descriptor.sourceDirectory);if(remount&&remount.descriptorHash===descriptor.descriptorHash&&actual.dev===remount.currentDev&&file.stat.dev===remount.originalDev)actual.dev=remount.originalDev;
+    if(!stat.isFile()||stat.isSymbolicLink()||!same(actual,file.stat))fail('SOURCE_CHANGED');
   }
 }
 /** Guards actual TaskStore callbacks, including any new material files they create. */
@@ -193,4 +197,19 @@ export async function releaseBasicSourceRetention({referenceComposition,director
     await write(path.join(descriptor.sourceDirectory,ROOT,'release.json'),release);
     return freeze(release);
   });
+}
+
+// Private backend admission after an explicitly pinned remount review. Only the
+// OS device number is portable; every inode, size, timestamp, link count and
+// complete payload hash must match before granting this process-local mapping.
+export async function authorizeReviewedBasicSourceRemount({directory,holdHash,descriptorHash,sourceHash}){
+ return gate(directory,async()=>{
+  const current=await state(directory);if(!current||current.hold.holdHash!==holdHash||current.hold.source.descriptorHash!==descriptorHash||current.hold.source.recordHash!==sourceHash)fail('REMOUNT_REVIEW_MISMATCH');
+  const d=current.hold.source,record=await read(path.join(directory,'workspace.json'),2*1024*1024);if(hash(record)!==sourceHash)fail('SOURCE_CHANGED');
+  let originalDev,currentDev;for(const file of d.files){const name=path.join(directory,file.fileName),s=await fs.lstat(name,{bigint:true});if(!s.isFile()||s.isSymbolicLink())fail('SOURCE_CHANGED');const actual=pin(s),withoutDev={...actual,dev:file.stat.dev};if(!same(withoutDev,file.stat))fail('SOURCE_CHANGED');originalDev??=file.stat.dev;currentDev??=actual.dev;if(originalDev!==file.stat.dev||currentDev!==actual.dev)fail('REMOUNT_MIXED_DEVICES');
+   const h=await fs.open(name,constants.O_RDONLY|(constants.O_NOFOLLOW??0));try{if(!same(pin(await h.stat({bigint:true})),actual))fail('FILE_CHANGED');const digest=crypto.createHash('sha256'),buf=Buffer.alloc(65536);let count=0;for(;;){const n=await h.read(buf,0,buf.length,null);if(!n.bytesRead)break;count+=n.bytesRead;if(count>file.bytes)fail('SOURCE_CHANGED');digest.update(buf.subarray(0,n.bytesRead));}if(count!==file.bytes||digest.digest('hex')!==file.sha256||!same(pin(await h.stat({bigint:true})),actual)||!same(pin(await fs.lstat(name,{bigint:true})),actual))fail('SOURCE_CHANGED');}finally{await h.close();}
+  }
+  if(hash(await read(path.join(directory,'workspace.json'),2*1024*1024))!==sourceHash)fail('SOURCE_CHANGED');
+  reviewedRemounts.set(directory,Object.freeze({descriptorHash,originalDev,currentDev}));return {verifiedFiles:d.files.length,originalDev,currentDev,descriptorHash};
+ });
 }
