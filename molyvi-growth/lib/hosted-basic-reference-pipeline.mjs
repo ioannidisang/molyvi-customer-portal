@@ -41,7 +41,7 @@ export async function createHostedBasicReferencePipeline({permit,store,storage,a
  const session={projectId:permit.projectId,ownerId:permit.ownerId},receipts=ROOT+'/receipts',buildRoot=ROOT+'/builds',directory=ROOT+'/journal',registryDirectory=ROOT+'/registry';
  need(storage===path.dirname(path.dirname(ROOT))&&typeof acquireLease==='function','RUNTIME_SCOPE');
  const authority=await createReferencePipelineAuthority({permit,store,storage:receipts,buildRoot});
- const sharp=createRequire(import.meta.url)('sharp');sharp.cache(false);sharp.concurrency(1);const decodeImage=createShopifyImageDecoder({sharp});
+ const sharp=createRequire(import.meta.url)('sharp');sharp.cache(false);sharp.concurrency(1);const decodeImage=createShopifyImageDecoder({sharp,sourcePixelLimit:16_000_000});
  const preparation=await createBasicPreparationService({store,storage:receipts,buildRoot,buildEnabled:true,referenceComposition:true,decodeImage,hostedReferenceAuthority:authority});
  const legacy=await createBasicPreparationService({store,storage:path.join(storage,'controlled-operations','basic-preparation')});
  const belongs=s=>s?.projectId===session.projectId&&s?.ownerId===session.ownerId;

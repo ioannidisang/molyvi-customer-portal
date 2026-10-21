@@ -293,7 +293,7 @@ async function checkReferenceRecordBytes(store,session,directory,recordBytesHash
   const loaded=await readReferenceFile(directory,'workspace.json',REFERENCE_RECORD_BYTES_CAP);
   if(bytesHash(loaded.bytes)!==recordBytesHash)referenceFail('RECORD_CHANGED');
 }
-async function decodeReferenceImage(bytes,asset,decodeImage){
+async function decodeReferenceImage(bytes,asset,decodeImage,sourceOriginal=false){
   if(!uuid(asset?.id)||typeof asset.name!=='string'||!asset.name.trim()||asset.name.length>200||/[\x00-\x1f\x7f]/.test(asset.name)||!extension(asset.mime)||!Number.isSafeInteger(asset.bytes)||asset.bytes<1||asset.bytes>REFERENCE_MATERIAL_BYTES_CAP||!/^[a-f0-9]{64}$/.test(asset.sha256)||bytes.length!==asset.bytes||bytesHash(bytes)!==asset.sha256)referenceFail('IMAGE_INVALID');
   // Preserve validatePhoto's exact format-signature conditions without its
   // base64 conversion. Full decompression below is an additional validation.
@@ -301,8 +301,9 @@ async function decodeReferenceImage(bytes,asset,decodeImage){
   const jpeg=bytes.length>=24&&bytes[0]===255&&bytes[1]===216&&bytes[bytes.length-2]===255&&bytes[bytes.length-1]===217;
   const webp=bytes.length>=30&&bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP'&&bytes.readUInt32LE(4)+8===bytes.length;
   if(!(asset.mime==='image/png'&&png||asset.mime==='image/jpeg'&&jpeg||asset.mime==='image/webp'&&webp))referenceFail('IMAGE_SIGNATURE_INVALID');
-  const result=await decodeImage(bytes,{mime:asset.mime,maxPixels:REFERENCE_PIXEL_CAP});
-  if(result?.decoded!==true||result.mime!==asset.mime||!Number.isSafeInteger(result.width)||!Number.isSafeInteger(result.height)||result.width<1||result.height<1||result.width*result.height>REFERENCE_PIXEL_CAP)referenceFail('DECODE_REQUIRED');
+  const maxPixels=sourceOriginal?16_000_000:REFERENCE_PIXEL_CAP;
+  const result=await decodeImage(bytes,{mime:asset.mime,maxPixels,sourceOriginal});
+  if(result?.decoded!==true||result.mime!==asset.mime||!Number.isSafeInteger(result.width)||!Number.isSafeInteger(result.height)||result.width<1||result.height<1||result.width*result.height>maxPixels)referenceFail('DECODE_REQUIRED');
   if(bytes.length!==asset.bytes||bytesHash(bytes)!==asset.sha256)referenceFail('DECODER_CHANGED_BYTES');
   return {decoded:true,mime:result.mime,width:result.width,height:result.height};
 }
@@ -362,7 +363,7 @@ export async function prepareStoredBasicReferenceComposition(store,session,{targ
     }});
     for(const [key,item]of inputs){
       const loaded=await readReferenceFile(directory,item.fileName,REFERENCE_FILE_BYTES_CAP,item.asset);
-      const decoded=await decodeReferenceImage(loaded.bytes,item.asset,decodeImage);
+      const decoded=await decodeReferenceImage(loaded.bytes,item.asset,decodeImage,item.kind==='source');
       await checkReferenceFile(directory,loaded);
       verified.set(key,{...item,stat:loaded.stat,decoded});
       await checkReferenceRecordBytes(store,session,directory,recordBytesHash);
