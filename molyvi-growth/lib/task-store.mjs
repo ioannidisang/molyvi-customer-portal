@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {IntakeError,prepareStorage} from './intake-store.mjs';
+import {withBasicSourceMutation} from './basic-source-retention.mjs';
 
 const validId = id => typeof id==='string' && /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(id);
 
@@ -24,6 +25,9 @@ export class TaskStore {
     return directory;
   }
   async write(directory,record) {
+    return withBasicSourceMutation(directory,()=>this.#writeUnlocked(directory,record));
+  }
+  async #writeUnlocked(directory,record) {
     const temporary=path.join(directory,`pending-${crypto.randomUUID()}.json`);
     const file=await fs.open(temporary,'wx',0o600);
     try {await file.writeFile(JSON.stringify(record)+'\n');await file.sync();} finally {await file.close();}
@@ -51,11 +55,15 @@ export class TaskStore {
   }
   async transact(id,ownerId,operation) {
     return this.serial(id,async()=>{
+      let sourceDirectory;
+      try{sourceDirectory=await this.directory(id);}catch(error){if(error.code==='ENOENT')throw new IntakeError('PROJECT_NOT_FOUND',404);throw error;}
+      return withBasicSourceMutation(sourceDirectory,async()=>{
       const {directory,record}=await this.load(id,ownerId);
       const before=JSON.stringify(record);
       const result=await operation(record);
-      if(JSON.stringify(record)!==before) await this.write(directory,record);
+      if(JSON.stringify(record)!==before) await this.#writeUnlocked(directory,record);
       return {record:structuredClone(record),result};
+      });
     });
   }
   async read(id,ownerId) {return this.serial(id,async()=>structuredClone((await this.load(id,ownerId)).record));}

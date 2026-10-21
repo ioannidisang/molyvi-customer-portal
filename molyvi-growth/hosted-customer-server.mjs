@@ -1,3 +1,4 @@
+import {loadHostedBasicCompositionProbe,runHostedBasicCompositionProbe} from './operations/hosted-basic-composition-probe.mjs';
 import {hostedBackupReadView} from './lib/hosted-backup-read-view.mjs';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -101,6 +102,27 @@ export async function createHostedCustomerServer({publicOrigin,healthHosts=[],st
       if(!server.listening)throw Error('BACKUP_APPLICATION_NOT_LISTENING');
       return resources.runBackup(fn);
     };
+    // Trusted in-process work only, sharing the pipeline's production lease.
+    // No HTTP caller can supply this callback or enable another build profile.
+    const withPreparationResources=async fn=>{
+      if(typeof fn!=='function')throw Error('HOSTED_PREPARATION_CALLBACK_REQUIRED');
+      if(!server.listening)throw Error('HOSTED_PREPARATION_NOT_LISTENING');
+      // These owners have their own scheduling/lifecycle. They must use the
+      // existing pipeline wiring, never this separate private operator path.
+      if(basicInstaller||themeRechecks||basicPipeline)throw Error('HOSTED_PREPARATION_OPERATION_EXCLUSIVE');
+      const release=await acquirePreparationLease();
+      try{return await fn();}finally{release();}
+    };
+    const withStartupPreparationResources=async fn=>{
+      if(typeof fn!=='function')throw Error('HOSTED_PREPARATION_CALLBACK_REQUIRED');
+      if(!server.listening)throw Error('HOSTED_PREPARATION_NOT_LISTENING');
+      if(!deferBackgroundStart||backgroundStarted||stopping||themeRechecks||controlledPro||photoOperationConfig||operationsConfig||catalogExtensionConfig)throw Error('HOSTED_STARTUP_PREPARATION_EXCLUSIVE');
+      if(basicInstaller&&(basicInstaller.status().phase!=='verified'||basicInstaller.status().inFlight))throw Error('HOSTED_STARTUP_INSTALLER_UNSETTLED');
+      const worker=basicPipeline?.status().worker;
+      if(worker&&(worker.inFlight||!['idle','disabled'].includes(worker.lifecycle)))throw Error('HOSTED_STARTUP_PIPELINE_UNSETTLED');
+      const release=await acquirePreparationLease();
+      try{return await fn();}finally{release();}
+    };
     const quietSnapshot=async fn=>{
       if(typeof fn!=='function')throw Error('BACKUP_SNAPSHOT_CALLBACK_REQUIRED');
       const snapshot=async()=>{
@@ -114,7 +136,7 @@ export async function createHostedCustomerServer({publicOrigin,healthHosts=[],st
       };
       return resources.ownsBackup()?snapshot():withBackupResources(snapshot);
     };
-    return {server,accounts,workspaces,notifications,deliveries,testPayments,themeRechecks,basicInstaller,basicPipeline,stop,quietSnapshot,withBackupResources,resourceStatus:resources.status,startBackground};
+    return {server,accounts,workspaces,notifications,deliveries,testPayments,themeRechecks,basicInstaller,basicPipeline,stop,quietSnapshot,withBackupResources,withPreparationResources,withStartupPreparationResources,resourceStatus:resources.status,startBackground};
   }catch(e){await themeRechecks?.stop();await basicInstaller?.stop();await basicPipeline?.stop();accounts.close();throw e;}
 }
 
@@ -185,8 +207,10 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   // A distinct one-use proof; completed historical probes are never rearmed.
   const combinedProbeRoot='/opt/render/project/src/briefs/molyvi-generation-combined-probe-20261021-r1';
   const combinedProbeConfig=await loadHostedGenerationProbe({permitFile:path.join(combinedProbeRoot,'permit.json'),source:storage,probeRoot:combinedProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
-  if([legacyProbeConfig,generationProbeConfig,combinedProbeConfig].filter(Boolean).length>1)throw Error('HOSTED_MULTIPLE_PROBES_FORBIDDEN');
-  const probeConfig=combinedProbeConfig??generationProbeConfig??legacyProbeConfig;
+  const basicProbeRoot='/opt/render/project/src/briefs/molyvi-basic-composition-probe-20261021-r1';
+  const basicProbeConfig=await loadHostedBasicCompositionProbe({permitFile:path.join(basicProbeRoot,'permit.json'),source:storage,probeRoot:basicProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
+  if([basicProbeConfig,legacyProbeConfig,generationProbeConfig,combinedProbeConfig].filter(Boolean).length>1)throw Error('HOSTED_MULTIPLE_PROBES_FORBIDDEN');
+  const probeConfig=basicProbeConfig??combinedProbeConfig??generationProbeConfig??legacyProbeConfig;
   if(process.env.MOLYVI_REAL_EMAIL_ENABLED==='true'){
     if(process.env.MOLYVI_GMAIL_ACCOUNT_VERIFIED!=='true')throw Error('GMAIL_ACCOUNT_VERIFICATION_REQUIRED');
     const getAccessToken=createGoogleMailTokenProvider({clientId:process.env.MOLYVI_GOOGLE_CLIENT_ID,clientSecret:process.env.MOLYVI_GOOGLE_CLIENT_SECRET,refreshToken:process.env.MOLYVI_GOOGLE_REFRESH_TOKEN});
@@ -214,7 +238,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     if(probeConfig){await app.stop();throw Error('HOSTED_MEMORY_PROBE_AUTOMATIC_SETUP_FAILED');}
     await reportBackupStartupFailure(transport);
   }
-  const startup=createHostedStartupLifecycle({app,backups,probeConfig,runProbe:(generationProbeConfig||combinedProbeConfig)?runHostedGenerationProbe:runHostedMemoryProbe,onBlocked:code=>console.error(code)});
+  const startup=createHostedStartupLifecycle({app,backups,probeConfig,runProbe:basicProbeConfig?runHostedBasicCompositionProbe:(generationProbeConfig||combinedProbeConfig)?runHostedGenerationProbe:runHostedMemoryProbe,onBlocked:code=>console.error(code)});
   const shutdown=()=>{void startup.stop().then(()=>process.exit(0),()=>{console.error('MOLYVI_HOSTED_SHUTDOWN_FAILED');process.exit(1);});};
   process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);
   if(probeConfig)app.server.prependOnceListener('listening',()=>{void startup.start();});

@@ -64,6 +64,35 @@ export async function buildBasicThemePackage(prepared,{outputDirectory,themeSour
   verifyBasicStorePackage(prepared);
   // Snapshot before the first await: caller mutation cannot change an in-flight build.
   const snapshot={plan:structuredClone(prepared.plan),uploads:prepared.uploads.map(item=>({...item,bytes:Buffer.from(item.bytes)}))},plan=verifyBasicStorePackage(snapshot);
+  return buildThemeProjection(snapshot,{outputDirectory,themeSource,upstreamPath,compact});
+}
+
+// LOCAL opt-in: the capability has already checked the same catalogue, frozen
+// work and image lineage as the legacy assembler. Only the hero and optional
+// logo are retained here; the other catalogue images are never copied into RAM.
+// The theme's own source files and ZIP still use bounded-by-input JSZip buffers;
+// this is not a streaming ZIP implementation or hosted memory certification.
+export async function buildBasicReferenceThemePackage(composition,{outputDirectory,themeSource=sourceDefault,upstreamPath=path.resolve(themeSource,'../upstream.json'),compact=true}={}){
+  if(typeof compact!=='boolean')fail('BASIC_THEME_COMPACT_INVALID');
+  const {verifyBasicReferenceComposition}=await import('./basic-reference-composition.mjs');
+  const plan=verifyBasicReferenceComposition(composition),uploads=[];
+  await composition.revalidate();
+  const hero=plan.products[0].photos.find(photo=>photo.role==='lifestyle')??plan.products[0].photos[0];
+  const selected=[hero.fileName,...(plan.branding.logoFile?[plan.branding.logoFile]:[])];
+  for(const fileName of selected)await composition.withAsset(fileName,async({bytes,metadata})=>{
+    if(!Buffer.isBuffer(bytes)||metadata.fileName!==fileName||bytes.length!==metadata.bytes||hash(bytes)!==metadata.sha256)fail('BASIC_THEME_REFERENCE_BYTES_CHANGED');
+    uploads.push({fileName,bytes:Buffer.from(bytes),sha256:metadata.sha256});
+  });
+  const assertCurrent=async()=>{
+    if(verifyBasicReferenceComposition(composition).planHash!==plan.planHash)fail('BASIC_THEME_REFERENCE_CHANGED');
+    await composition.revalidate();
+  };
+  await assertCurrent();
+  return buildThemeProjection({plan:structuredClone(plan),uploads},{outputDirectory,themeSource,upstreamPath,compact},assertCurrent);
+}
+
+async function buildThemeProjection(snapshot,{outputDirectory,themeSource,upstreamPath,compact},assertCurrent=async()=>{}){
+  const plan=snapshot.plan;
   if(!/^molyvi-basic-[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/i.test(plan.namespace??''))fail('BASIC_THEME_NAMESPACE_INVALID');
   if(!plan.branding?.brandName||!['text','existing'].includes(plan.branding.logoMode)||!Object.values({primary:plan.branding.palette?.primary,secondary:plan.branding.palette?.secondary,accent:plan.branding.palette?.accent}).every(color=>/^#[a-f\d]{6}$/i.test(color??'')))fail('BASIC_THEME_BRAND_INVALID');
   if(pageIds.some(id=>plan.pages.filter(page=>page.documentId===id&&page.handle===`${plan.namespace}-${id}`&&page.isPublished===false).length!==1))fail('BASIC_THEME_RESOURCES_INVALID');
@@ -116,6 +145,7 @@ export async function buildBasicThemePackage(prepared,{outputDirectory,themeSour
   for(const name of ['locales/el.json','locales/en.default.json']){const locale=readJson(name);locale.molyvi_basic=labels;locale.forma.demo_notice=labels.notice;set(name,json(locale));}
   const changedFiles=[...files].filter(([file,bytes])=>!sourceFiles.some(original=>original.file===file&&original.bytes.equals(bytes))).map(([file])=>file).sort();
   if(digest(records(await tree(source)))!==digest(records(sourceFiles)))fail('BASIC_THEME_SOURCE_CHANGED');
+  await assertCurrent();
   await checkedDirectory(path.dirname(destination));await fs.mkdir(destination,{mode:0o700});const themeDirectory=compact?null:path.join(destination,'theme');
   if(compact)await validateThemeSettings(null,undefined,{fileMap:files});
   else{
@@ -128,6 +158,8 @@ export async function buildBasicThemePackage(prepared,{outputDirectory,themeSour
   for(const [file,bytes]of archiveFiles)zip.file(file,bytes,{date:new Date('2000-01-01T00:00:00Z'),createFolders:false,unixPermissions:0o100644});
   const zipBytes=await zip.generateAsync({type:'nodebuffer',platform:'UNIX',compression:'DEFLATE',compressionOptions:{level:6}}),zipName='MOLYVI_Basic_Draft.zip',zipPath=path.join(destination,zipName);
   const manifest={schemaVersion:1,kind:'molyvi_basic_theme_package',planHash:plan.planHash,projectId:plan.projectId,targetStore:plan.targetStore,status:'UNPUBLISHED_NOT_APPLIED',applicationAuthorized:false,publicationAuthorized:false,sourceTheme:{sha256:digest(records(sourceFiles)),files:sourceFiles.length},upstream:{commit:upstream.commit,license:upstream.license,licenseSha256:upstream.licenseSha256,recordSha256:hash(upstreamBytes)},resources:{collectionHandle:plan.namespace,counts:plan.counts,pages:plan.pages.map(({documentId,handle})=>({documentId,handle})),nativeSettingsApplied:false},hero:{file:`assets/${heroName}`,sourceFile:hero.fileName,sha256:hero.sha256},molyviSignatureIncluded:true,changedFiles,files:records([...files].map(([file,bytes])=>({file,bytes})).sort((a,b)=>a.file<b.file?-1:a.file>b.file?1:0)),zip:{file:zipName,bytes:zipBytes.length,sha256:hash(zipBytes)},customerAcceptance:'PENDING',legalCertification:false};
+  await assertCurrent();
   const manifestBytes=Buffer.from(json(manifest));await fs.writeFile(zipPath,zipBytes,{flag:'wx',mode:0o600});await fs.writeFile(path.join(destination,'manifest.json'),manifestBytes,{flag:'wx',mode:0o600});if(!compact)await fs.writeFile(path.join(destination,'upstream.json'),upstreamBytes,{flag:'wx',mode:0o600});
+  await assertCurrent();
   return {directory:destination,themeDirectory,zipPath,manifest,manifestSha256:hash(manifestBytes),zipSha256:hash(zipBytes),changedFiles};
 }

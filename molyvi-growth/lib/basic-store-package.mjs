@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
+import {constants} from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {makeBasicSourceRetentionDescriptor,withBasicRetainedSourceRead} from './basic-source-retention.mjs';
 import {canonicalJson,IntakeError,WORKSPACE_ROOT} from './intake-store.mjs';
 import {serviceProductionEligible,applyServiceBusinessResult} from './service-production-queue.mjs';
 import {approvedBrandPresentation} from './brand-presentation.mjs';
@@ -12,6 +14,7 @@ import {productPhotoPlan} from './product-photo-plan.mjs';
 import {preparePhotoExecution} from './product-photo-execution.mjs';
 import {validateSessionExecution} from './session-execution.mjs';
 import {readPhoto,readGeneratedPhoto,validatePhoto} from './product-assets.mjs';
+import {MATERIAL_LIMITS} from './product-materials.mjs';
 import {readLogo} from './logo-assets.mjs';
 import {SERVICE_OPERATION_TASK_IDS,readServiceOperation} from './service-operations.mjs';
 import {previewStoreContent} from './store-content.mjs';
@@ -120,7 +123,7 @@ function checkedPhotoLineage(record,product,photo,asset,work){
 
 // Generic catalogue assembly from completed frozen work. Payment ingress remains
 // the existing restricted TEST adapter; this does not implement real payments.
-export function prepareBasicStorePackage(record,{targetStore,binding,assets=[],sourceAssets=[],logo=null}={}){
+function assembleBasicStorePackage(record,{targetStore,binding,resolveAsset}={}){
   checkedBinding(record,targetStore,binding);
   if(!uuid(record?.id)||!serviceProductionEligible(record)||record.order.packageId!=='basic'||!/^\d+$/.test(record.servicePurchase.receipt.orderId))fail('BASIC_PACKAGE_VERIFIED_BASIC_REQUIRED');
   const products=record.tasks.catalog.draft.products??[];
@@ -135,8 +138,8 @@ export function prepareBasicStorePackage(record,{targetStore,binding,assets=[],s
   const namespace=`molyvi-basic-${record.id}`,uploads=[],sourceEvidence=[],warnings=[];
   let logoFile=null;
   if(branding.logoMode==='existing'){
-    const item=checkedBytes(record.brandAssets?.[branding.logoAssetId],logo?[logo]:[]);
-    logoFile=`branding/logo.${extension(item.asset.mime)}`;uploads.push({fileName:logoFile,bytes:item.bytes,sha256:item.asset.sha256});
+    const item=resolveAsset('logo',record.brandAssets?.[branding.logoAssetId]);
+    logoFile=`branding/logo.${extension(item.asset.mime)}`;uploads.push({fileName:logoFile,...(item.bytes?{bytes:item.bytes}:{}),sha256:item.asset.sha256});
   }
   const skus=new Set(),allVariantIds=new Set(),allUnitIds=new Set();
   const catalog=products.map((product,index)=>{
@@ -153,17 +156,17 @@ export function prepareBasicStorePackage(record,{targetStore,binding,assets=[],s
     if(work?.status!=='succeeded'||work.result?.hash!==hash(plan)||!equal(work.result.output,plan)||!equal(work.inputs?.answers?.product,product)||!equal(work.inputs?.productCopy,copy)||work.inputs?.submissionHash!==submissionHash||!equal(work.inputs?.photoEvidence,submission.photoEvidence)||!equal(gallery?.source,work.inputs)||gallery.sourceHash!==hash(work.inputs))fail('BASIC_PACKAGE_PRODUCT_JOB_STALE');
     const expectedDependencies=[{id:'branding',submissionHash:common.branding.submissionHash,resultHash:common.branding.resultHash},{id:'photos',submissionHash:common.photos.submissionHash}];
     if(!equal(work.inputs.dependencies,expectedDependencies)||!equal(work.inputs.branding,record.tasks.branding.submission.answers)||!equal(work.inputs.presentation,record.tasks.photos.submission.answers))fail('BASIC_PACKAGE_PRODUCT_JOB_STALE');
-    for(const reference of submission.photoEvidence){const asset=record.assets[reference.id],item=checkedBytes(asset,sourceAssets);if(asset.productId!==product.id||reference.sha256!==item.asset.sha256)fail('BASIC_PACKAGE_SOURCE_REFERENCE_STALE');sourceEvidence.push({productId:product.id,assetId:asset.id,sha256:asset.sha256,bytes:asset.bytes});}
+    for(const reference of submission.photoEvidence){const asset=record.assets[reference.id],item=resolveAsset('source',asset);if(asset.productId!==product.id||reference.sha256!==item.asset.sha256)fail('BASIC_PACKAGE_SOURCE_REFERENCE_STALE');sourceEvidence.push({productId:product.id,assetId:asset.id,sha256:asset.sha256,bytes:asset.bytes});}
     const expectedSlots=plan.slots.map(slot=>slot.id);
     if(!Array.isArray(gallery.order)||gallery.order.length!==expectedSlots.length||new Set(gallery.order).size!==expectedSlots.length||!equal([...gallery.order].sort(),[...expectedSlots].sort())||gallery.slots.length!==expectedSlots.length||!equal(gallery.slots.map(slot=>slot.id).sort(),[...expectedSlots].sort()))fail('BASIC_PACKAGE_GALLERY_INCOMPLETE');
     for(const slot of gallery.slots){const expected=plan.slots.find(item=>item.id===slot.id);if(slot.visualUnitId!==expected.visualUnitId||slot.role!==expected.role)fail('BASIC_PACKAGE_GALLERY_UNIT_MISMATCH');}
     const selection=gallerySelectionSnapshot(record,product.id);
     if(selection.photos.length!==product.visualUnits.length*3||product.visualUnits.some(unit=>selection.photos.filter(photo=>photo.visualUnitId===unit.id).length!==3))fail('BASIC_PACKAGE_PRODUCT_IMAGES_INCOMPLETE');
     const photos=selection.photos.map((photo,photoIndex)=>{
-      const item=checkedBytes(record.generatedAssets?.[photo.assetId],assets),asset=item.asset;
+      const item=resolveAsset('generated',record.generatedAssets?.[photo.assetId]),asset=item.asset;
       const lineage=checkedPhotoLineage(record,product,photo,asset,work);
       const fileName=`images/${namespace}-${index+1}-${photoIndex+1}.${extension(asset.mime)}`;
-      uploads.push({fileName,bytes:item.bytes,sha256:asset.sha256});
+      uploads.push({fileName,...(item.bytes?{bytes:item.bytes}:{}),sha256:asset.sha256});
       const slot=gallery.slots.find(item=>item.id===photo.slotId);
       if(slot.requests.some(request=>!['completed','failed_no_output','cancelled'].includes(request.status)))warnings.push({code:'PHOTO_REQUEST_PENDING',productId:product.id,slotId:photo.slotId});
       return {...photo,position:photoIndex+1,fileName,mime:asset.mime,bytes:asset.bytes,alt:`${copy.title.text} — ${photo.role==='white'?'λευκό φόντο':`παρουσίαση ${photoIndex+1}`}`,lineage};
@@ -202,7 +205,12 @@ export function prepareBasicStorePackage(record,{targetStore,binding,assets=[],s
     counts:{products:counts.catalogProducts,variants:counts.variants,visualUnits:counts.visualUnits,photos:counts.initialPhotoSlots,pages:7},binding:structuredClone(binding),offer:{packageId:pack.id,offerHash:pack.offerHash,catalogUnits:10,photoSlotsPerUnit:3,skuLimit:null,skuLimitStatus:'unresolved_not_unlimited'},branding:{...branding,logoFile},products:catalog,operations,pages,
     review:{customerAcceptance:'PENDING',contentReview:content.approval??null,legalCertification:false,publicationBlockers:content.publicationBlockers,paymentActivation:'owner_setup_pending',nativeShopifySettings:'PENDING',targetStoreVerification:'PENDING',paymentIngress:'existing_restricted_shopify_test_only',inventoryApplication:'PENDING_LOCATION_MAPPING',taxApplication:'PENDING_MERCHANT_REVIEW',catalogScope:'ordinary_physical_goods_EUR',imageFidelity:'not_certified',warnings},
     source:{recordHash:hash(record),paymentReceiptHash:hash(record.servicePurchase.receipt),businessReceiptHash:hash(record.jobs[`${common.business.submissionHash}:work`].providerResult),common,originalImages:sourceEvidence,contentBundleHash:content.bundleHash,contentTemplateVersion:content.templateVersion,operationHashes:Object.fromEntries(Object.entries(operations).map(([id,artifact])=>[id,hash(artifact)]))}};
-  const prepared={plan:{...plan,planHash:hash(plan)},uploads};verifyBasicStorePackage(prepared);return prepared;
+  const prepared={plan:{...plan,planHash:hash(plan)},uploads};checkPlan(prepared.plan);return prepared;
+}
+
+export function prepareBasicStorePackage(record,{targetStore,binding,assets=[],sourceAssets=[],logo=null}={}){
+  const prepared=assembleBasicStorePackage(record,{targetStore,binding,resolveAsset:(kind,asset)=>checkedBytes(asset,kind==='source'?sourceAssets:kind==='generated'?assets:logo?[logo]:[])});
+  verifyBasicStorePackage(prepared);return prepared;
 }
 
 export async function prepareStoredBasicStorePackage(store,session,{targetStore,binding}={}){
@@ -217,6 +225,198 @@ export async function prepareStoredBasicStorePackage(store,session,{targetStore,
   const prepared=prepareBasicStorePackage(record,{targetStore,binding,assets,sourceAssets,logo});
   if(hash(await store.read(session.projectId,session.ownerId))!==prepared.plan.source.recordHash)fail('BASIC_PACKAGE_RECORD_CHANGED_DURING_READ');
   return prepared;
+}
+
+// Opt-in LOCAL stored-reference composition. These limits do not replace any
+// existing hosted admission, backup, transfer or installer limit.
+const REFERENCE_FILE_BYTES_CAP=16*1024*1024;
+const REFERENCE_MATERIAL_BYTES_CAP=Math.min(REFERENCE_FILE_BYTES_CAP,MATERIAL_LIMITS.maxFileBytes);
+const REFERENCE_RECORD_BYTES_CAP=2*1024*1024;
+const REFERENCE_PIXEL_CAP=12_000_000;
+const referenceCompositions=new WeakMap();
+const freezeReference=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freezeReference(child);Object.freeze(value);}return value;};
+const referenceFail=code=>fail(`BASIC_REFERENCE_COMPOSITION_${code}`);
+const sameReferenceStat=(a,b)=>['dev','ino','size','mtimeNs','ctimeNs','nlink'].every(key=>a[key]===b[key]);
+async function safeReferenceDirectory(directory){
+  if(typeof directory!=='string'||!path.isAbsolute(directory)||path.resolve(directory)!==directory)referenceFail('ROOT_INVALID');
+  let current=path.parse(directory).root;
+  for(const part of directory.slice(current.length).split(path.sep).filter(Boolean)){
+    current=path.join(current,part);const stat=await fs.lstat(current);
+    if(!stat.isDirectory()||stat.isSymbolicLink())referenceFail('UNSAFE_DIRECTORY');
+  }
+  if(await fs.realpath(directory)!==directory)referenceFail('ROOT_ALIAS');
+}
+function referenceStat(stat,maxBytes){
+  if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1n||stat.size<1n||stat.size>BigInt(maxBytes))referenceFail('UNSAFE_FILE');
+}
+async function readReferenceFile(directory,name,maxBytes,expected){
+  await safeReferenceDirectory(directory);
+  if(typeof name!=='string'||!/^([a-z]+-[a-f0-9-]{36}\.bin|workspace\.json)$/.test(name))referenceFail('FILE_NAME_INVALID');
+  const file=path.join(directory,name),initial=await fs.lstat(file,{bigint:true});referenceStat(initial,maxBytes);
+  if(expected&&(initial.size!==BigInt(expected.bytes)))referenceFail('SIZE_CHANGED');
+  const handle=await fs.open(file,constants.O_RDONLY|(constants.O_NOFOLLOW??0));
+  try{
+    const stat=await handle.stat({bigint:true});referenceStat(stat,maxBytes);
+    if(!sameReferenceStat(initial,stat))referenceFail('FILE_CHANGED');
+    const bytes=Buffer.alloc(Number(stat.size));let offset=0;
+    while(offset<bytes.length){
+      const result=await handle.read(bytes,offset,Math.min(64*1024,bytes.length-offset),offset);
+      if(result.bytesRead<1)referenceFail('FILE_CHANGED');offset+=result.bytesRead;
+    }
+    if((await handle.read(Buffer.alloc(1),0,1,offset)).bytesRead||!sameReferenceStat(stat,await handle.stat({bigint:true})))referenceFail('FILE_CHANGED');
+    await safeReferenceDirectory(directory);
+    if(!sameReferenceStat(stat,await fs.lstat(file,{bigint:true})))referenceFail('FILE_CHANGED');
+    if(expected&&bytesHash(bytes)!==expected.sha256)referenceFail('SHA_MISMATCH');
+    return {bytes,stat,fileName:name};
+  }finally{await handle.close();}
+}
+async function checkReferenceFile(directory,pin){
+  await safeReferenceDirectory(directory);
+  const current=await fs.lstat(path.join(directory,pin.fileName),{bigint:true});referenceStat(current,REFERENCE_FILE_BYTES_CAP);
+  if(!sameReferenceStat(pin.stat,current))referenceFail('FILE_CHANGED');
+}
+async function loadReferenceRecord(store,session,expectedDirectory){
+  const directory=await store.directory(session.projectId);
+  if(expectedDirectory&&directory!==expectedDirectory)referenceFail('ROOT_CHANGED');
+  const loaded=await readReferenceFile(directory,'workspace.json',REFERENCE_RECORD_BYTES_CAP);
+  let record;try{record=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(loaded.bytes));}catch{referenceFail('RECORD_INVALID');}
+  if(record?.id!==session.projectId||record?.ownerId!==session.ownerId)referenceFail('OWNER_MISMATCH');
+  return {directory,record,recordBytesHash:bytesHash(loaded.bytes)};
+}
+// The initial safe read is fully parsed and authorized. Exact equality to those
+// same bytes preserves that decision without repeatedly parsing/canonicalizing.
+// This pin belongs only to this live capability; the durable retention record
+// keeps its separate canonical-record checks. Even whitespace changes invalidate
+// this capability. Every check still rereads through the bounded safe-file path.
+async function checkReferenceRecordBytes(store,session,directory,recordBytesHash){
+  if(await store.directory(session.projectId)!==directory)referenceFail('ROOT_CHANGED');
+  const loaded=await readReferenceFile(directory,'workspace.json',REFERENCE_RECORD_BYTES_CAP);
+  if(bytesHash(loaded.bytes)!==recordBytesHash)referenceFail('RECORD_CHANGED');
+}
+async function decodeReferenceImage(bytes,asset,decodeImage){
+  if(!uuid(asset?.id)||typeof asset.name!=='string'||!asset.name.trim()||asset.name.length>200||/[\x00-\x1f\x7f]/.test(asset.name)||!extension(asset.mime)||!Number.isSafeInteger(asset.bytes)||asset.bytes<1||asset.bytes>REFERENCE_MATERIAL_BYTES_CAP||!/^[a-f0-9]{64}$/.test(asset.sha256)||bytes.length!==asset.bytes||bytesHash(bytes)!==asset.sha256)referenceFail('IMAGE_INVALID');
+  // Preserve validatePhoto's exact format-signature conditions without its
+  // base64 conversion. Full decompression below is an additional validation.
+  const png=bytes.length>=33&&bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))&&bytes.toString('ascii',12,16)==='IHDR'&&bytes.readUInt32BE(16)>0&&bytes.readUInt32BE(20)>0;
+  const jpeg=bytes.length>=24&&bytes[0]===255&&bytes[1]===216&&bytes[bytes.length-2]===255&&bytes[bytes.length-1]===217;
+  const webp=bytes.length>=30&&bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP'&&bytes.readUInt32LE(4)+8===bytes.length;
+  if(!(asset.mime==='image/png'&&png||asset.mime==='image/jpeg'&&jpeg||asset.mime==='image/webp'&&webp))referenceFail('IMAGE_SIGNATURE_INVALID');
+  const result=await decodeImage(bytes,{mime:asset.mime,maxPixels:REFERENCE_PIXEL_CAP});
+  if(result?.decoded!==true||result.mime!==asset.mime||!Number.isSafeInteger(result.width)||!Number.isSafeInteger(result.height)||result.width<1||result.height<1||result.width*result.height>REFERENCE_PIXEL_CAP)referenceFail('DECODE_REQUIRED');
+  if(bytes.length!==asset.bytes||bytesHash(bytes)!==asset.sha256)referenceFail('DECODER_CHANGED_BYTES');
+  return {decoded:true,mime:result.mime,width:result.width,height:result.height};
+}
+function referenceInputs(record){
+  const inputs=new Map();
+  const add=(kind,asset)=>{
+    if(!asset||!uuid(asset.id))referenceFail('ASSET_MISSING');
+    if(!Number.isSafeInteger(asset.bytes)||asset.bytes<1||asset.bytes>REFERENCE_MATERIAL_BYTES_CAP||!extension(asset.mime)||!/^[a-f0-9]{64}$/.test(asset.sha256))referenceFail('IMAGE_INVALID');
+    const key=`${kind}:${asset.id}`,existing=inputs.get(key);
+    if(existing&&!equal(existing.asset,asset))referenceFail('ASSET_MISMATCH');
+    inputs.set(key,{kind,asset:structuredClone(asset),fileName:`${kind==='source'?'photo':kind==='logo'?'logo':'generated'}-${asset.id}.bin`});
+  };
+  for(const product of record.tasks.catalog.draft.products){
+    for(const ref of record.productTasks?.[product.id]?.submission?.photoEvidence??[])add('source',record.assets?.[ref.id]);
+    for(const photo of gallerySelectionSnapshot(record,product.id).photos)add('generated',record.generatedAssets?.[photo.assetId]);
+  }
+  const branding=approvedBrandPresentation(record);
+  if(branding?.logoAssetId)add('logo',record.brandAssets?.[branding.logoAssetId]);
+  return inputs;
+}
+
+export const isBasicReferenceComposition=value=>referenceCompositions.has(value);
+export function verifyBasicReferenceComposition(value){
+  const state=referenceCompositions.get(value);
+  if(!state||value.plan!==state.plan||value.assets!==state.assets)referenceFail('CAPABILITY_REQUIRED');
+  checkPlan(state.plan);return state.plan;
+}
+// The source directory and full original/selection pins are obtainable only
+// from a genuine stored capability, never from caller-supplied plan metadata.
+export function describeBasicReferenceRetention(value){
+  verifyBasicReferenceComposition(value);
+  return referenceCompositions.get(value).retention;
+}
+
+/**
+ * Fully validates the same source/lineage/catalogue as the legacy byte-buffer
+ * assembler, but keeps only descriptors after reading and decoding each stored
+ * original, selected output and logo. No public metadata-only resolver exists.
+ * TaskStore is a trusted local dependency; its serial lease is single-process,
+ * not a production database/distributed lock. Source deletion is not provided.
+ */
+export async function prepareStoredBasicReferenceComposition(store,session,{targetStore,binding,decodeImage}={}){
+  if(!store||typeof store.serial!=='function'||typeof store.directory!=='function'||typeof decodeImage!=='function')referenceFail('TRUSTED_ADAPTERS_REQUIRED');
+  if(!uuid(session?.projectId)||!uuid(session?.ownerId))referenceFail('SESSION_REQUIRED');
+  session=freezeReference(structuredClone({projectId:session.projectId,ownerId:session.ownerId}));
+  binding=freezeReference(structuredClone(binding));
+  const snapshot=await store.serial(session.projectId,async()=>{
+    const {directory,record,recordBytesHash}=await loadReferenceRecord(store,session);
+    checkedBinding(record,targetStore,binding);checkedAssetBudget(record);
+    const recordHash=hash(record),inputs=referenceInputs(record),verified=new Map();
+    // Full business/catalogue/lineage validation precedes decoding. This
+    // metadata-only intermediate never escapes and cannot mint a capability.
+    const prepared=assembleBasicStorePackage(record,{targetStore,binding,resolveAsset:(kind,asset)=>{
+      const match=inputs.get(`${kind}:${asset?.id}`);
+      if(!match||!equal(match.asset,asset))referenceFail('VERIFIED_ASSET_REQUIRED');
+      return {asset:match.asset};
+    }});
+    for(const [key,item]of inputs){
+      const loaded=await readReferenceFile(directory,item.fileName,REFERENCE_FILE_BYTES_CAP,item.asset);
+      const decoded=await decodeReferenceImage(loaded.bytes,item.asset,decodeImage);
+      await checkReferenceFile(directory,loaded);
+      verified.set(key,{...item,stat:loaded.stat,decoded});
+      await checkReferenceRecordBytes(store,session,directory,recordBytesHash);
+    }
+    for(const pin of verified.values())await checkReferenceFile(directory,pin);
+    const plan=freezeReference(structuredClone(prepared.plan));
+    const assets=plan.products.flatMap(product=>product.photos.map(photo=>({
+      fileName:photo.fileName,kind:'image',mime:photo.mime,bytes:photo.bytes,sha256:photo.sha256,
+      productId:product.productId,assetId:photo.assetId,candidateId:photo.candidateId,
+      visualUnitId:photo.visualUnitId,slotId:photo.slotId,position:photo.position,
+    })));
+    if(plan.branding.logoFile){
+      const item=verified.get(`logo:${plan.branding.logoAssetId}`);
+      if(!item)referenceFail('LOGO_MISSING');
+      assets.push({fileName:plan.branding.logoFile,kind:'image',mime:item.asset.mime,bytes:item.asset.bytes,sha256:item.asset.sha256,assetId:item.asset.id});
+    }
+    // Match the legacy export budget as well as the deduplicated input budget:
+    // every logical output file counts even if two selections share bytes.
+    if(assets.reduce((sum,asset)=>sum+asset.bytes,0)>BASIC_ASSEMBLY_INPUT_BYTES_CAP)fail('BASIC_PACKAGE_INPUT_BYTES_LIMIT');
+    const inputsByOutput=new Map(assets.map(asset=>[asset.fileName,verified.get(`${asset.fileName.startsWith('branding/')?'logo':'generated'}:${asset.assetId}`)]));
+    if(assets.length!==prepared.uploads.length||assets.some(asset=>!inputsByOutput.get(asset.fileName)))referenceFail('OUTPUT_ASSET_MISMATCH');
+    await checkReferenceRecordBytes(store,session,directory,recordBytesHash);
+    return {directory,recordHash,recordBytesHash,plan,assets:freezeReference(assets),verified,inputsByOutput,inputBytes:[...inputs.values()].reduce((sum,item)=>sum+item.asset.bytes,0)};
+  });
+  const {plan,assets}=snapshot,retention=makeBasicSourceRetentionDescriptor(snapshot);let busy=false;
+  const exclusive=operation=>async(...args)=>{
+    if(busy)referenceFail('CONCURRENT_READ');busy=true;
+    try{return await store.serial(session.projectId,()=>withBasicRetainedSourceRead(retention,()=>operation(...args)));}finally{busy=false;}
+  };
+  async function current(){
+    await checkReferenceRecordBytes(store,session,snapshot.directory,snapshot.recordBytesHash);
+  }
+  const checkAllInputPins=async()=>{for(const pin of snapshot.verified.values())await checkReferenceFile(snapshot.directory,pin);};
+  const revalidate=exclusive(async()=>{
+    await current();
+    await checkAllInputPins();
+    await current();return plan;
+  });
+  const withAsset=exclusive(async(fileName,consumer)=>{
+    if(typeof consumer!=='function')referenceFail('CONSUMER_REQUIRED');
+    const metadata=assets.find(asset=>asset.fileName===fileName),pin=snapshot.inputsByOutput.get(fileName);
+    if(!metadata||!pin)referenceFail('ASSET_NOT_OWNED');
+    await current();await checkAllInputPins();
+    const loaded=await readReferenceFile(snapshot.directory,pin.fileName,REFERENCE_FILE_BYTES_CAP,pin.asset);
+    await decodeReferenceImage(loaded.bytes,pin.asset,decodeImage);
+    await checkReferenceFile(snapshot.directory,loaded);await checkAllInputPins();await current();
+    const result=await consumer({bytes:loaded.bytes,metadata});
+    if(bytesHash(loaded.bytes)!==metadata.sha256)referenceFail('CONSUMER_CHANGED_BYTES');
+    await checkReferenceFile(snapshot.directory,loaded);await checkAllInputPins();await current();
+    return result;
+  });
+  const capability=Object.freeze({plan,assets,inputBytes:snapshot.inputBytes,revalidate,withAsset});
+  referenceCompositions.set(capability,{plan,assets,retention});
+  return capability;
 }
 
 function checkPlan(plan){

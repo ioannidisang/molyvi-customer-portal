@@ -81,9 +81,11 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   const sessions=new Map(),pumps=new Map();
   // A customer confirms the current roster; this creates metadata only. Store
   // credentials, installation authority and package execution are never HTTP inputs.
-  if(basicPreparationConfig)keys(basicPreparationConfig,['storage']);
+  if(basicPreparationConfig)keys(basicPreparationConfig,boundary.hosted?['storage']:['storage','buildEnabled','buildRoot','referenceComposition','decodeImage']);
+  if(basicPreparationConfig?.buildEnabled&&basicPreparationConfig.referenceComposition!==true)throw new IntakeError('BASIC_PREPARATION_REFERENCE_CONFIG_REQUIRED',500);
   if(basicPreparationRuntime&&(!boundary.hosted||!customerAccess||basicPreparationConfig||!isHostedBasicPipeline(basicPreparationRuntime)))throw new IntakeError('BASIC_PREPARATION_RUNTIME_INVALID',500);
-  const basicPreparation=basicPreparationRuntime?.service??(basicPreparationConfig?await createBasicPreparationService({store,storage:basicPreparationConfig.storage,targetStore:'molyvi-still-dev.myshopify.com',buildEnabled:false}):null);
+  const basicPreparation=basicPreparationRuntime?.service??(basicPreparationConfig?await createBasicPreparationService({store,targetStore:'molyvi-still-dev.myshopify.com',buildEnabled:false,...basicPreparationConfig}):null);
+  const localReferencePreparation=!boundary.hosted&&basicPreparationConfig?.buildEnabled===true&&basicPreparationConfig.referenceComposition===true;
   const paymentBridge=servicePayments?createServicePaymentBridge({...servicePayments,store}):null;
   const paymentReceiver=hostedTestPayments??paymentBridge;
   const sessionCookie=(session)=>{const token=crypto.randomBytes(32).toString('hex');sessions.set(token,session);return `molyvi_demo=${token}; HttpOnly; SameSite=Strict; Path=/`;};
@@ -507,7 +509,7 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
     if(startupFailure)throw Error('WORKER_STARTUP_DRAIN_FAILED');
   };
   server.pauseForPreparation=async()=>{
-    if(!boundary.hosted||preparationPaused||backupPaused||closing)throw Error('PREPARATION_DRAIN_UNAVAILABLE');
+    if((!boundary.hosted&&!localReferencePreparation)||preparationPaused||backupPaused||closing)throw Error('PREPARATION_DRAIN_UNAVAILABLE');
     preparationPaused=true;const resume=suspendQueues();
     try{await waitIdle('PREPARATION_DRAIN_TIMEOUT');}
     catch(e){resume();preparationPaused=false;throw e;}
@@ -537,6 +539,8 @@ export async function createWorkspaceApp({site=path.join(root,'public/workspace'
   // Trusted in-process operators share the exact same per-project lock as HTTP
   // customers and workers. This handle and result importers have no HTTP route.
   server.workspaceStore=store;
+  // Trusted local operator/worker only; no execution endpoint is exposed.
+  if(!boundary.hosted)server.basicPreparationService=basicPreparation;
   server.servicePaymentBridge=paymentBridge;
   return server;
 }
