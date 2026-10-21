@@ -1,3 +1,4 @@
+import {loadHostedDraftHandoff,runHostedDraftHandoff} from './operations/hosted-draft-delivery.mjs';
 import {loadHostedBasicInstallationProbe,runHostedBasicInstallationProbe} from './operations/hosted-basic-installation-probe.mjs';
 import {loadHostedBasicCompositionProbe,runHostedBasicCompositionProbe} from './operations/hosted-basic-composition-probe.mjs';
 import {hostedBackupReadView} from './lib/hosted-backup-read-view.mjs';
@@ -212,8 +213,9 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   const basicInstallProbeConfig=await loadHostedBasicInstallationProbe({permitFile:path.join(basicInstallProbeRoot,'permit.json'),source:storage,probeRoot:basicInstallProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
   const basicProbeRoot='/opt/render/project/src/briefs/molyvi-basic-composition-probe-20261021-r1';
   const basicProbeConfig=await loadHostedBasicCompositionProbe({permitFile:path.join(basicProbeRoot,'permit.json'),source:storage,probeRoot:basicProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
-  if([basicInstallProbeConfig,basicProbeConfig,legacyProbeConfig,generationProbeConfig,combinedProbeConfig].filter(Boolean).length>1)throw Error('HOSTED_MULTIPLE_PROBES_FORBIDDEN');
-  const probeConfig=basicInstallProbeConfig??basicProbeConfig??combinedProbeConfig??generationProbeConfig??legacyProbeConfig;
+  const draftHandoffConfig=await loadHostedDraftHandoff({source:storage,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
+  if([draftHandoffConfig,basicInstallProbeConfig,basicProbeConfig,legacyProbeConfig,generationProbeConfig,combinedProbeConfig].filter(Boolean).length>1)throw Error('HOSTED_MULTIPLE_PROBES_FORBIDDEN');
+  const probeConfig=draftHandoffConfig??basicInstallProbeConfig??basicProbeConfig??combinedProbeConfig??generationProbeConfig??legacyProbeConfig;
   if(process.env.MOLYVI_REAL_EMAIL_ENABLED==='true'){
     if(process.env.MOLYVI_GMAIL_ACCOUNT_VERIFIED!=='true')throw Error('GMAIL_ACCOUNT_VERIFICATION_REQUIRED');
     const getAccessToken=createGoogleMailTokenProvider({clientId:process.env.MOLYVI_GOOGLE_CLIENT_ID,clientSecret:process.env.MOLYVI_GOOGLE_CLIENT_SECRET,refreshToken:process.env.MOLYVI_GOOGLE_REFRESH_TOKEN});
@@ -241,7 +243,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
     if(probeConfig){await app.stop();throw Error('HOSTED_MEMORY_PROBE_AUTOMATIC_SETUP_FAILED');}
     await reportBackupStartupFailure(transport);
   }
-  const startup=createHostedStartupLifecycle({app,backups,probeConfig,runProbe:basicInstallProbeConfig?runHostedBasicInstallationProbe:basicProbeConfig?runHostedBasicCompositionProbe:(generationProbeConfig||combinedProbeConfig)?runHostedGenerationProbe:runHostedMemoryProbe,onBlocked:code=>console.error(code)});
+  const startup=createHostedStartupLifecycle({app,backups,probeConfig,runProbe:draftHandoffConfig?runHostedDraftHandoff:basicInstallProbeConfig?runHostedBasicInstallationProbe:basicProbeConfig?runHostedBasicCompositionProbe:(generationProbeConfig||combinedProbeConfig)?runHostedGenerationProbe:runHostedMemoryProbe,onBlocked:code=>console.error(code)});
   const shutdown=()=>{void startup.stop().then(()=>process.exit(0),()=>{console.error('MOLYVI_HOSTED_SHUTDOWN_FAILED');process.exit(1);});};
   process.once('SIGINT',shutdown);process.once('SIGTERM',shutdown);
   if(probeConfig)app.server.prependOnceListener('listening',()=>{void startup.start();});
