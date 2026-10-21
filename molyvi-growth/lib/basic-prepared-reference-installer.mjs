@@ -59,12 +59,12 @@ export async function installPreparedBasicReference({preparation,session,confirm
       preflightEvidence,liveThemeId:LIVE,inventoryLocationId:LOCATION,currency:'EUR'});
     const root=location+'.bridge';if(!reviewedResume)await fs.mkdir(root,{mode:0o700});
     const counters={graphQLRequests:0,mutations:0,stagedUploads:0,externalRequests:0},pending=new Set();let sequence=0,head=hash(expected),queue=Promise.resolve();
-    let started=Date.now(),deadline=started+BASIC_REFERENCE_INSTALL_LIMITS.elapsedMs,catalogRecovery;
+    let started=Date.now(),deadline=started+BASIC_REFERENCE_INSTALL_LIMITS.elapsedMs,catalogRecovery,undispatchedAuthority;
     const binding={intentHash:state.intentHash,targetStore:TARGET,projectId:owner.projectId,ownerHash:expected.ownerHash,planHash:plan.planHash,themeZipSha256:expected.themeZipSha256,packageBytesHash:state.intent.packageBytesHash};
     if(reviewedResume){
       const resumed=await validateReviewedReferenceResume({root,state,review:reviewedResume,confirmation:expected,binding,limits:BASIC_REFERENCE_INSTALL_LIMITS});
-      Object.assign(counters,resumed.counters);({head,sequence,started,deadline,catalogRecovery}=resumed);
-      await save(path.join(root,'reviewed-resume.json'),reviewedResume);
+      Object.assign(counters,resumed.counters);({head,sequence,started,deadline,catalogRecovery,undispatchedAuthority}=resumed);
+      await save(path.join(root,undispatchedAuthority?'reviewed-undispatched-resume.json':'reviewed-resume.json'),reviewedResume);
     }else await save(path.join(root,'binding.json'),{schemaVersion:1,kind:'molyvi_reference_preparation_installation',confirmation:expected,binding,limits:BASIC_REFERENCE_INSTALL_LIMITS,startedAt:new Date(started).toISOString(),deadlineAt:new Date(deadline).toISOString(),publicationAuthorized:false,newChargesAuthorized:false});
     async function storage(){
       let bytes=theme.zipBytes.length; // Count retained ZIP even though no copy is written here.
@@ -95,12 +95,12 @@ export async function installPreparedBasicReference({preparation,session,confirm
         await storage();await save(path.join(root,`readback-${value.readRequestId}.json`),{intentHash:state.intentHash,key:value.key,attemptId:value.attemptId,remoteId:value.remoteId,readRequestId:value.readRequestId,sha256:hash(value)});
       }});
     const wrapped={...transport,...Object.fromEntries(['preflight','apply','readback'].map(key=>[key,track(transport[key])]))};
-    const runner=await createBasicInstallationRunner({registryDirectory:registry,trustedShop:{shopId:SHOP,targetStore:TARGET},transport:wrapped,operatorId,timeoutMs:60000,themeWaitMs:0});
+    const runner=await createBasicInstallationRunner({registryDirectory:registry,trustedShop:{shopId:SHOP,targetStore:TARGET},transport:wrapped,operatorId,timeoutMs:60000,themeWaitMs:0,undispatchedAuthority});
     try{
       let result=state;const steps=[];
       for(const step of state.intent.steps){
         if(Date.now()>=deadline)fail('DEADLINE');await onStep({phase:'before',key:step.key,kind:step.kind});const at=Date.now();
-        result=reviewedResume&&step.key===reviewedResume.key?await runner.reconcileStep({directory:location,context,key:step.key}):await runner.runStep({directory:location,context,key:step.key});steps.push({key:step.key,kind:step.kind,elapsedMs:Date.now()-at});
+        result=catalogRecovery&&step.key===reviewedResume.key?await runner.reconcileStep({directory:location,context,key:step.key}):await runner.runStep({directory:location,context,key:step.key});steps.push({key:step.key,kind:step.kind,elapsedMs:Date.now()-at});
         if(result.waiting&&waitForKnownTheme)result=await settleKnownReferenceTheme({result,assertActive,readback:()=>runner.reconcileStep({directory:location,context,key:step.key}),onWaiting:w=>onStep({phase:'waiting',key:step.key,kind:step.kind,remoteId:w.remoteId})});
         await onStep({phase:'after',key:step.key,kind:step.kind});if(result.waiting)fail('KNOWN_THEME_WAITING');
       }

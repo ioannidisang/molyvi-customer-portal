@@ -1,3 +1,4 @@
+import {permitsUndispatchedReferenceStep} from './basic-reference-resume.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -44,7 +45,7 @@ function binding(state){
  * Journal evidence remains operator-attested, not independently certified by
  * this module. A hostile transport or local administrator is out of scope.
  */
-export async function createBasicInstallationRunner({registryDirectory,runtimeProfile,trustedShop,transport,operatorId,timeoutMs=30_000,themeWaitMs=20_000,themeClock=Date.now,themeSleep=ms=>new Promise(resolve=>setTimeout(resolve,ms))}={}){
+export async function createBasicInstallationRunner({registryDirectory,runtimeProfile,trustedShop,transport,operatorId,timeoutMs=30_000,themeWaitMs=20_000,themeClock=Date.now,themeSleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),undispatchedAuthority}={}){
   if(runtimeProfile!==undefined&&![BASIC_INSTALL_HOSTED_PROFILE,BASIC_INSTALL_PREPARED_PROFILE].includes(runtimeProfile))fail('RUNTIME_PROFILE_INVALID');
   const registry=await registryPath(registryDirectory),shop=structuredClone(trustedShop);
   if(runtimeProfile===BASIC_INSTALL_HOSTED_PROFILE&&registry!==BASIC_INSTALL_HOSTED_REGISTRY)fail('RUNTIME_REGISTRY_MISMATCH');
@@ -187,6 +188,14 @@ export async function createBasicInstallationRunner({registryDirectory,runtimePr
     return locked(input,async(options,key,state)=>{
       const step=stepFor(state,key),current=state.steps[key];
       if(current.status==='succeeded')return {...state,duplicate:true};
+      if(permitsUndispatchedReferenceStep(undispatchedAuthority,state,key)){
+        const attemptId=current.attemptId;
+        if(step.kind!=='variant_media'||step.dependsOn.some(k=>state.steps[k].status!=='succeeded'))fail('RECONCILIATION_REQUIRED');
+        await preflight(state,step,attemptId,'before_apply');
+        await invoke('apply',requestFor(state,step,attemptId));
+        const facts=await preflight(state,step,attemptId,'before_readback'),verified=await readback(state,step,attemptId,'after_apply',facts);
+        return recordBasicInstallationReceipt({...options,key,attemptId,receipt:verified.receipt});
+      }
       if(durableThemes&&step.kind==='theme'&&current.status==='claimed_outcome_unknown')return finishTheme(options,state,step,progressFor(state,step,options),{reconcile:true});
       if(current.status!=='pending'||Object.values(state.steps).some(item=>['claimed_outcome_unknown','blocked_no_automatic_retry'].includes(item.status)))fail('RECONCILIATION_REQUIRED');
       if(step.dependsOn.some(parent=>state.steps[parent].status!=='succeeded'))fail('DEPENDENCIES_INCOMPLETE');

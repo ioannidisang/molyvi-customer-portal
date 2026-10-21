@@ -1,0 +1,4 @@
+import {createRequire} from 'node:module';
+import {createShopifyImageDecoder,SHOPIFY_IMAGE_DECODE_LIMITS} from './shopify-image-decoder.mjs';
+const sharp=createRequire(import.meta.url)('sharp');sharp.cache(false);sharp.concurrency(1);
+try{const options=JSON.parse(process.argv[2]),chunks=[];let size=0;for await(const chunk of process.stdin){size+=chunk.length;if(size>SHOPIFY_IMAGE_DECODE_LIMITS.encodedBytes)throw Object.assign(Error('limit'),{code:'SHOPIFY_IMAGE_DECODE_INPUT_LIMIT'});chunks.push(chunk);}const decode=createShopifyImageDecoder({sharp,sourcePixelLimit:16_000_000});const result=await decode(Buffer.concat(chunks),options);process.stdout.write(JSON.stringify({ok:true,result}));}catch(e){process.stdout.write(JSON.stringify({ok:false,code:/^SHOPIFY_IMAGE_DECODE_[A-Z_]+$/.test(e.code??'')?e.code:'SHOPIFY_IMAGE_DECODE_CHILD_FAILED'}));process.exitCode=1;}

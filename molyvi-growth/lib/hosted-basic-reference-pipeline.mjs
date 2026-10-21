@@ -2,11 +2,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {Worker} from 'node:worker_threads';
-import {createRequire} from 'node:module';
+
 import {canonicalJson} from './intake-store.mjs';
 import {createBasicPreparationService} from './basic-preparation.mjs';
 import {createBasicPreparationWorker} from './basic-preparation-worker.mjs';
-import {createShopifyImageDecoder} from './shopify-image-decoder.mjs';
+import {createIsolatedShopifyImageDecoder} from './shopify-image-decoder-isolated.mjs';
 import {installPreparedBasicReference} from './basic-prepared-reference-installer.mjs';
 import {readBasicInstallation} from './basic-installation.mjs';
 import {readExactToken} from './hosted-basic-installer-access.mjs';
@@ -44,7 +44,7 @@ export async function createHostedBasicReferencePipeline({permit,store,storage,a
  const session={projectId:permit.projectId,ownerId:permit.ownerId},receipts=ROOT+'/receipts',buildRoot=ROOT+'/builds',directory=ROOT+'/journal',registryDirectory=ROOT+'/registry';
  need(storage===path.dirname(path.dirname(ROOT))&&typeof acquireLease==='function','RUNTIME_SCOPE');
  const authority=await createReferencePipelineAuthority({permit,store,storage:receipts,buildRoot});
- const sharp=createRequire(import.meta.url)('sharp');sharp.cache(false);sharp.concurrency(1);const decodeImage=createShopifyImageDecoder({sharp,sourcePixelLimit:16_000_000});
+ const decodeImage=createIsolatedShopifyImageDecoder();
  const preparation=await createBasicPreparationService({store,storage:receipts,buildRoot,buildEnabled:true,referenceComposition:true,decodeImage,hostedReferenceAuthority:authority});
  const legacy=await createBasicPreparationService({store,storage:path.join(storage,'controlled-operations','basic-preparation')});
  const belongs=s=>s?.projectId===session.projectId&&s?.ownerId===session.ownerId;
