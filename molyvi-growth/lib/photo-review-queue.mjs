@@ -121,13 +121,20 @@ export function createPhotoReviewQueue({store, provider, enabled = false, dailyA
       owners.set(key, owner);
       try {
         await acquireLock();
-        for (const {session} of await projects()) await store.transact(session.projectId, session.ownerId, project => {
+        for (const {session, record} of await projects()) {
+          const recover = project => {
           for (const claim of Object.values(project.photoClaims ?? {})) if (reviewable(claim)) enqueuePhotoClaimReview(project, {claimId: claim.id, now: date()});
           for (const job of Object.values(project.photoReviewQueue?.jobs ?? {})) if (job.status === 'running') {
             job.status = job.savedResult ? 'result_ready' : 'paused';
             if (!job.savedResult) {job.reason = 'interrupted_attempt'; job.pausedAt = date();}
           }
-        });
+          };
+          // The installer holds the immutable customer source across restart.
+          // Validate recovery on a detached record first; unchanged projects
+          // need no write lease. Real recovery still uses the guarded transaction.
+          const preview = structuredClone(record); recover(preview);
+          if (canonicalJson(preview) !== canonicalJson(record)) await store.transact(session.projectId, session.ownerId, recover);
+        }
         initialized = true;
       } catch (error) {await releaseLock().catch(() => {}); if (owners.get(key) === owner) owners.delete(key); throw error;}
     })();
