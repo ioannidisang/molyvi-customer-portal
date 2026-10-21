@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-export const BASIC_INSTALL_PROBE_ROOT='/opt/render/project/src/briefs/molyvi-basic-installation-probe-20261021-r1';
+export const BASIC_INSTALL_PROBE_ROOT='/opt/render/project/src/briefs/molyvi-basic-installation-probe-20261021-r2';
 export const BASIC_INSTALL_PROBE_SERVICE='srv-db7othjrjlhs73cg7lf0';
 export const BASIC_INSTALL_PROBE_WORKSPACE='tea-d9bnluoqmsqc7399dhfg';
 const context=new AsyncLocalStorage();

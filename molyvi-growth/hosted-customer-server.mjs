@@ -208,7 +208,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   // A distinct one-use proof; completed historical probes are never rearmed.
   const combinedProbeRoot='/opt/render/project/src/briefs/molyvi-generation-combined-probe-20261021-r1';
   const combinedProbeConfig=await loadHostedGenerationProbe({permitFile:path.join(combinedProbeRoot,'permit.json'),source:storage,probeRoot:combinedProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
-  const basicInstallProbeRoot='/opt/render/project/src/briefs/molyvi-basic-installation-probe-20261021-r1';
+  const basicInstallProbeRoot='/opt/render/project/src/briefs/molyvi-basic-installation-probe-20261021-r2';
   const basicInstallProbeConfig=await loadHostedBasicInstallationProbe({permitFile:path.join(basicInstallProbeRoot,'permit.json'),source:storage,probeRoot:basicInstallProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});
   const basicProbeRoot='/opt/render/project/src/briefs/molyvi-basic-composition-probe-20261021-r1';
   const basicProbeConfig=await loadHostedBasicCompositionProbe({permitFile:path.join(basicProbeRoot,'permit.json'),source:storage,probeRoot:basicProbeRoot,release:process.env.RENDER_GIT_COMMIT,serviceId:process.env.RENDER_SERVICE_ID});

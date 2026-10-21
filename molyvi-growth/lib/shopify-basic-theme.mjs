@@ -15,6 +15,16 @@ const sha=v=>crypto.createHash('sha256').update(v).digest('hex'),md5=v=>crypto.c
 const id=v=>typeof v==='string'&&/^[1-9][0-9]{0,24}$/.test(v),isHash=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v),uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v),gid=(kind,v)=>`gid://shopify/${kind}/${v}`;
 const fail=code=>{throw new IntakeError(`SHOPIFY_BASIC_THEME_${code}`,422);};
 const MAX_ZIP=32*1024*1024,MAX_TOTAL=64*1024*1024,MAX_FILE=8*1024*1024,MAX_FILES=1500,TIMEOUT=30_000;
+
+// Linear, constant-auxiliary-space check. A repeated capture-free group still
+// creates a large regexp backtracking stack for multi-megabyte provider bodies.
+// Accept exactly the previous base64 syntax; final source hashes remain required.
+export function isShopifyThemeBase64(value){
+ if(typeof value!=='string'||value.length>4*Math.ceil(MAX_FILE/3)||value.length%4!==0)return false;
+ let end=value.length;if(end&&value.charCodeAt(end-1)===61)end--;if(end&&value.charCodeAt(end-1)===61)end--;
+ for(let i=0;i<end;i++){const c=value.charCodeAt(i);if(!((c>=65&&c<=90)||(c>=97&&c<=122)||(c>=48&&c<=57)||c===43||c===47))return false;}
+ return true;
+}
 const folders=new Set(['assets','config','layout','locales','sections','snippets','templates','blocks']);
 const IDENTITY=`shop { id myshopifyDomain currencyCode }
  currentAppInstallation { id app { id } accessScopes { handle } }
@@ -212,7 +222,7 @@ export function createShopifyBasicThemeTransport({prepared,referenceComposition,
    if(!Array.isArray(list?.nodes)||list.nodes.length>50||typeof list.pageInfo?.hasNextPage!=='boolean'||!Array.isArray(list.userErrors)||list.userErrors.length)fail('FILES_READBACK_INVALID');
    for(const f of list.nodes){const expectedFile=originals.get(f.filename);if(!expectedFile||seen.has(f.filename)||seen.size>=MAX_FILES)fail('FILE_READBACK_MISMATCH');fileSize(f.size);seen.add(f.filename);let bytes;
     if(f.body?.__typename==='OnlineStoreThemeFileBodyText'&&typeof f.body.content==='string')bytes=Buffer.from(f.body.content,'utf8');
-    else if(f.body?.__typename==='OnlineStoreThemeFileBodyBase64'&&typeof f.body.contentBase64==='string'&&/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(f.body.contentBase64))bytes=Buffer.from(f.body.contentBase64,'base64');
+    else if(f.body?.__typename==='OnlineStoreThemeFileBodyBase64'&&isShopifyThemeBase64(f.body.contentBase64))bytes=Buffer.from(f.body.contentBase64,'base64');
     else if(f.body?.__typename==='OnlineStoreThemeFileBodyUrl'){
      const url=safeUrl(f.body.url,'cdn');if(++externalCount>256)fail('ASSET_REQUEST_BUDGET_EXHAUSTED');if(options.themeProgress)await options.themeProgress.reserve('external_read');bytes=await guarded(async signal=>{const response=await abortable(uploadFetch(url,{method:'GET',redirect:'error',credentials:'omit',cache:'no-store',signal}),signal);if(response.url&&response.url!==url)fail('FILE_URL_ORIGIN_MISMATCH');return body(response,signal,MAX_FILE);},options.signal);
     }else fail('FILE_BODY_INVALID');
