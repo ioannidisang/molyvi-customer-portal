@@ -7,6 +7,7 @@ import {snapshot,inventory} from './backup.mjs';
 import {createGenerationBase,encryptGeneration,restoreGeneration,GENERATION_BACKUP_LIMITS as L} from './generation-backup.mjs';
 import {generationEvidenceHash,planGenerationRetention} from './generation-retention.mjs';
 import {R2_LIMITS} from './r2-budget.mjs';
+import {planBudgetWait} from './budget-wait.mjs';
 
 export const AUTOMATIC_GENERATION_POLICY=Object.freeze({
   schemaVersion:1,format:'MOLYVI-GENERATION-1',selection:'whole-service-shared-base-v1'
@@ -60,7 +61,7 @@ function sameInventory(a,b){
 }
 export function createGenerationBackupRun({
   source,root,release,keyFile,keyHash,scope,withBackupResources,quietSnapshot,
-  r2Factory,budget,catalog,now=Date.now,statfs=fs.statfs
+  r2Factory,budget,catalog,now=Date.now,statfs=fs.statfs,allowBudgetDeferral=false
 }){
   source=path.resolve(source);root=path.resolve(root);keyFile=path.resolve(keyFile);
   separate(source,root);separate(source,keyFile);separate(root,keyFile);
@@ -69,6 +70,7 @@ export function createGenerationBackupRun({
     &&typeof r2Factory==='function'&&typeof budget?.reserveRecorded==='function'
     &&typeof budget?.entries==='function'&&catalog,'GENERATION_RUN_CONFIG');
   scope=plain(scope);
+  check(typeof allowBudgetDeferral==='boolean','GENERATION_RUN_CONFIG');
   return runId=>withBackupResources(async()=>{
     check(/^auto-\d{14}-[a-f0-9]{8}$/.test(runId),'BACKUP_RUN_ID');
     await directory(source);await directory(root);catalog.assertSettled();
@@ -79,9 +81,9 @@ export function createGenerationBackupRun({
     check(sourceBytes+L.reservedBytes<=L.sourceBytes,'BACKUP_SOURCE_SIZE_LIMIT');
     const disk=await statfs(root);
     check(Number(disk.bavail)*Number(disk.bsize)>=GENERATION_AUTOMATIC_DISK_BYTES,'BACKUP_LOCAL_DISK_LIMIT');
-    check(budget.summary().requests<R2_LIMITS.requests,'BACKUP_TRANSFER_BUDGET_STOP');
+    if(!allowBudgetDeferral)check(budget.summary().requests<R2_LIMITS.requests,'BACKUP_TRANSFER_BUDGET_STOP');
     const before=catalog.snapshot(),at=iso(now);
-    catalog.beginRun({id:runId,release,at});
+    if(!allowBudgetDeferral)catalog.beginRun({id:runId,release,at});
     await fs.mkdir(dir,{mode:0o700});await directory(dir);
     let key,r2,operation=0;
     const reservedIds=new Set();
@@ -144,6 +146,27 @@ export function createGenerationBackupRun({
       const candidate={id:runId,verifiedAt:at,kind:'base-overlay',baseKey:base.key,overlayKey:overlay.key};
       const all=[...before.objects,...(newBase?[base]:[]),overlay];
       const u=budget.summary(),uploadBytes=overlay.bytes+(newBase?base.bytes:0),downloadBytes=base.bytes+overlay.bytes;
+      if(allowBudgetDeferral){
+        // Local arithmetic only, NOT a fresh provider inventory or permission to
+        // delete. Exact cipher sizes and known catalog bound this wait decision.
+        // The unchanged real LIST/HEAD admission below still verifies R2.
+        const localPlan=planGenerationRetention({phase:'preflight',now:at,
+          inventory:{complete:true,capturedAt:at,objects:before.objects.map(r=>({key:r.key,bytes:r.bytes,sha256:r.sha256,etag:r.etag}))},
+          objects:all.map(objectOnly),generations:before.generations,candidate,reservations:[]});
+        admitted(localPlan);
+        const wait=planBudgetWait({entries:budget.entries(),now:now(),demand:{uploadBytes,downloadBytes,
+          requests:localPlan.budget.required.requests+1+before.objects.length}});
+        if(wait){
+          check(!r2&&operation===0&&reservedIds.size===0&&generationEvidenceHash(catalog.snapshot())===generationEvidenceHash(before),'BACKUP_WAIT_NOT_PRISTINE');
+          await writeProof(path.join(dir,'budget-wait.json'),{...wait,runId,release,scope});
+          for(const name of ['snapshot','overlay.mlvb',...(newBase?['base.mlvb']:[])])await cleanupChild(dir,path.join(dir,name));
+          const result={...wait,runId,catalogUnchanged:true,scratchCleaned:true};
+          await writeProof(path.join(dir,'budget-wait-complete.json'),result);
+          return result;
+        }
+        check(generationEvidenceHash(catalog.snapshot())===generationEvidenceHash(before),'BACKUP_WAIT_CATALOG_CHANGED');
+        catalog.beginRun({id:runId,release,at});
+      }
       // Exact ciphertext sizes, no forecast compression or future deletion.
       check(u.uploadBytes+uploadBytes<=R2_LIMITS.uploadBytes&&u.downloadBytes+downloadBytes<=R2_LIMITS.downloadBytes
         &&u.requests+12<=R2_LIMITS.requests,'BACKUP_TRANSFER_BUDGET_STOP');

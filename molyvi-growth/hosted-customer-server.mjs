@@ -11,7 +11,7 @@ import {GmailMailTransport} from './lib/gmail-mail-transport.mjs';
 import {createGoogleMailTokenProvider} from './lib/google-mail-token-provider.mjs';
 import {createWorkspaceApp} from './paid-workspace-server.mjs';
 import {createRequestBoundary} from './lib/hosted-request-boundary.mjs';
-import {createAutomaticBackups,reportBackupStartupFailure} from './operations/r2-backup/automatic.mjs';
+import {createAutomaticBackups,reportBackupStartupFailure,generationActivation} from './operations/r2-backup/automatic.mjs';
 import {createHostedTestPayments,loadHostedTestPaymentConfig} from './lib/hosted-test-payments.mjs';
 import {createHostedControlledPro,loadHostedControlledProConfig} from './lib/hosted-controlled-pro.mjs';
 import {loadHostedPhotoConfig,runHostedPhotoOperation} from './lib/hosted-photo-operation.mjs';
@@ -170,6 +170,10 @@ export function createHostedStartupLifecycle({app,backups=null,probeConfig=null,
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   if(process.env.MOLYVI_HOSTED_ENABLED!=='true')throw Error('HOSTED_ACTIVATION_REQUIRED');
   const backupReadOnly=hostedBackupReadView(process.env.MOLYVI_BACKUP_READ_ONLY_ENABLED);
+  // Only the validated private generation opt-in enables persistent read views.
+  // A malformed backup setting is reported by automatic startup below; login remains available.
+  let generationReadView=false;
+  try{generationReadView=Boolean(await generationActivation());}catch{}
   for(const flag of ['MOLYVI_PAYMENT_RECEIVER_ENABLED','MOLYVI_AI_WORKERS_ENABLED','MOLYVI_BACKUP_UPLOAD_ENABLED'])if(process.env[flag]==='true')throw Error('HOSTED_STAGING_SCOPE_REQUIRED');
   const port=Number(process.env.PORT??10000);if(!Number.isInteger(port)||port<1||port>65535||[18012,18013,19099].includes(port))throw Error('INVALID_PORT');
   const storage=process.env.MOLYVI_PRIVATE_STORAGE??path.join(PRIVATE_ROOT,'molyvi-hosted-staging');let transport;
@@ -201,7 +205,7 @@ if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.ur
   // An explicit real permit never falls back to the historical synthetic job.
   if(!basicInstaller&&!basicInstallerStartupBlocked&&!basicPipelinePermit&&!basicPipelineStartupBlocked)try{themeRecheckConfig=await loadHostedThemeRecheckActivation();}catch{themeRecheckStartupBlocked=true;console.error('MOLYVI_THEME_RECHECK_STARTUP_BLOCKED');}
   if(probeConfig&&([controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig].some(Boolean)||(basicInstaller&&basicInstaller.status().phase!=='verified')||basicPipelineStartupBlocked||basicInstallerStartupBlocked||themeRecheckStartupBlocked))throw Error('HOSTED_MEMORY_PROBE_STARTUP_NOT_SETTLED');
-  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller,basicPipelinePermit,deferBackgroundStart:Boolean(probeConfig),backupReadOnly:backupReadOnly||Boolean(combinedProbeConfig)});
+  const app=await createHostedCustomerServer({publicOrigin:process.env.MOLYVI_PORTAL_ORIGIN??process.env.RENDER_EXTERNAL_URL,healthHosts:(process.env.MOLYVI_HEALTH_HOSTS??'').split(',').filter(Boolean),storage,transport,testPaymentConfig,controlledProConfig,photoOperationConfig,operationsConfig,catalogExtensionConfig,themeRecheckConfig,basicInstaller,basicPipelinePermit,deferBackgroundStart:Boolean(probeConfig),backupReadOnly:backupReadOnly||Boolean(combinedProbeConfig)||generationReadView});
   await fs.writeFile(path.join(storage,'hosted-scope.json'),JSON.stringify({mode:'hosted_staging',realEmailEnabled:Boolean(transport),testPaymentsEnabled:Boolean(app.testPayments),controlledLocalProEnabled:Boolean(controlledProConfig),photoStartupOperationEnabled:Boolean(photoOperationConfig),operationsStartupEnabled:Boolean(operationsConfig),catalogExtensionEnabled:Boolean(catalogExtensionConfig),themeRecheckProbeConfigured:Boolean(themeRecheckConfig),themeRecheckStartupBlocked,shopifyInstallerWorkerEnabled:Boolean(basicInstaller),basicInstallerStartupBlocked,basicPipelineConfigured:Boolean(app.basicPipeline),basicPipelineStartupBlocked,aiWorkersEnabled:false,realPaymentsEnabled:false,cloudArchiveActive:false})+'\n',{mode:0o600});
   let backups;
   try{backups=await createAutomaticBackups({storage,release:process.env.RENDER_GIT_COMMIT,quietSnapshot:app.quietSnapshot,withBackupResources:app.withBackupResources,transport});}
