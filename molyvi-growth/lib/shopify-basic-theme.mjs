@@ -1,3 +1,4 @@
+import {matchesShopifyWeight} from './shopify-weight-readback.mjs';
 import crypto from 'node:crypto';
 import {createRequire} from 'node:module';
 import {canonicalJson,IntakeError} from './intake-store.mjs';
@@ -167,7 +168,7 @@ export function createShopifyBasicThemeTransport({prepared,referenceComposition,
    for(const [i,photo]of p.photos.entries()){const m=actual.media.nodes[i],expected=r.dependencies[`media:${p.productId}:${photo.position}`];if(m?.id!==gid('MediaImage',expected.remoteId)||m.alt!==photo.alt||m.status!=='READY'||m.mediaContentType!=='IMAGE')fail('REMOTE_MEDIA_MISMATCH');}
    for(const v of receipt.observed.variants){const actualVariant=actual.variants.nodes.find(a=>a.id===gid('ProductVariant',v.remoteId));if(!actualVariant||actualVariant.sku!==(v.sku??'')||cents(actualVariant.price)!==v.priceMinor||actualVariant.inventoryPolicy!=='DENY'||!equal(actualVariant.selectedOptions,p.optionNames.map((name,i)=>({name,value:v.optionValues[i]})))||actualVariant.media?.pageInfo?.hasNextPage!==false||!equal(actualVariant.media.nodes,[{id:gid('MediaImage',r.dependencies[`media:${p.productId}:${v.imagePosition}`].remoteId)}]))fail('REMOTE_VARIANT_MISMATCH');
     const inv=actualVariant.inventoryItem,weight=inv?.measurement?.weight,levels=inv?.inventoryLevels;
-    if(inv?.sku!==(v.sku??'')||inv.tracked!==true||inv.requiresShipping!==true||(v.weightGrams===null?weight!==null:weight?.unit!=='GRAMS'||weight.value!==v.weightGrams)||levels?.pageInfo?.hasNextPage!==false||!equal(levels.nodes,[{location:{id:gid('Location',LOCATION)},quantities:[{name:'available',quantity:v.stock}]}]))fail('REMOTE_INVENTORY_MISMATCH');
+    if(inv?.sku!==(v.sku??'')||inv.tracked!==true||inv.requiresShipping!==true||!matchesShopifyWeight(weight,v.weightGrams)||levels?.pageInfo?.hasNextPage!==false||!equal(levels.nodes,[{location:{id:gid('Location',LOCATION)},quantities:[{name:'available',quantity:v.stock}]}]))fail('REMOTE_INVENTORY_MISMATCH');
    }
   }
   for(const p of plan.pages){const data=await graphql('page',{id:gid('Page',r.dependencies[`page:${p.documentId}`].remoteId)},options);identity(data);if(data.page?.id!==gid('Page',r.dependencies[`page:${p.documentId}`].remoteId)||data.page.handle!==p.handle||data.page.title!==p.title||data.page.isPublished!==false||typeof data.page.body!=='string'||sha(data.page.body)!==p.bodySha256)fail('REMOTE_PAGE_MISMATCH');}

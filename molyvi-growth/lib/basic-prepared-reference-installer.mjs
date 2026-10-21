@@ -1,9 +1,10 @@
+import {validateReviewedReferenceResume} from './basic-reference-resume.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {canonicalJson,IntakeError} from './intake-store.mjs';
 import {isBasicReferenceComposition} from './basic-reference-composition.mjs';
-import {createBasicInstallation,releaseBasicInstallationSource} from './basic-installation.mjs';
+import {createBasicInstallation,readBasicInstallation,releaseBasicInstallationSource} from './basic-installation.mjs';
 import {createBasicInstallationRunner} from './basic-installation-runner.mjs';
 import {createShopifyBasicTransport} from './shopify-basic-transport.mjs';
 import {BASIC_THEME_PROGRESS_ROOT} from './basic-theme-progress.mjs';
@@ -37,10 +38,11 @@ export async function settleKnownReferenceTheme({result,readback,assertActive=()
 /** All arguments are supplied by trusted backend code. withResources must be
  * the resident application's preparation lease, including actual asynchronous
  * transport settlement after a runner timeout. A failed/uncertain installation
- * keeps its source hold and one-attempt journal; this bridge never resumes it.
+ * keeps its source hold and one-attempt journal. Explicitly reviewed first-catalog
+ * reconciliation preserves its claim, ledger and deadline; automatic retries remain off.
  */
 export async function installPreparedBasicReference({preparation,session,confirmation,withResources,directory,registryDirectory,
-  authorizationSha256,preflightEvidence,operatorId,accessToken,fetchImpl,uploadFetch,decodeImage,onStep=async()=>{},assertActive=()=>{},waitForKnownTheme=false}={}){
+  authorizationSha256,preflightEvidence,operatorId,accessToken,fetchImpl,uploadFetch,decodeImage,onStep=async()=>{},assertActive=()=>{},waitForKnownTheme=false,reviewedResume}={}){
   if(typeof assertActive!=='function'||typeof waitForKnownTheme!=='boolean')fail('CONTROL_INVALID');
   if(!preparation||typeof preparation.loadPrepared!=='function'||typeof withResources!=='function'||typeof fetchImpl!=='function'||typeof uploadFetch!=='function'||typeof decodeImage!=='function'||typeof onStep!=='function')fail('PRIVATE_DEPENDENCIES_REQUIRED');
   const expected=structuredClone(confirmation),owner=structuredClone(session);
@@ -52,14 +54,18 @@ export async function installPreparedBasicReference({preparation,session,confirm
     const {referenceComposition,theme}=loaded,plan=referenceComposition.plan;
     if(plan.targetStore!==TARGET||plan.projectId!==owner.projectId||plan.planHash!==expected.planHash||sha(theme.zipBytes)!==expected.themeZipSha256)fail('SOURCE_BINDING');
     const context={...owner,targetStore:TARGET,planHash:plan.planHash,themeZipSha256:expected.themeZipSha256};
-    const state=await createBasicInstallation({directory:location,registryDirectory:registry,referenceComposition,retainSource:true,theme,context,
+    const state=reviewedResume?await readBasicInstallation({directory:location,context}):await createBasicInstallation({directory:location,registryDirectory:registry,referenceComposition,retainSource:true,theme,context,
       authorization:{projectId:owner.projectId,ownerHash:expected.ownerHash,targetStore:TARGET,planHash:plan.planHash,createOnly:true,publicationAuthorized:false,newChargesAuthorized:false,referenceSha256:authorizationSha256},
       preflightEvidence,liveThemeId:LIVE,inventoryLocationId:LOCATION,currency:'EUR'});
-    const root=location+'.bridge';await fs.mkdir(root,{mode:0o700});
+    const root=location+'.bridge';if(!reviewedResume)await fs.mkdir(root,{mode:0o700});
     const counters={graphQLRequests:0,mutations:0,stagedUploads:0,externalRequests:0},pending=new Set();let sequence=0,head=hash(expected),queue=Promise.resolve();
-    const started=Date.now(),deadline=started+BASIC_REFERENCE_INSTALL_LIMITS.elapsedMs;
+    let started=Date.now(),deadline=started+BASIC_REFERENCE_INSTALL_LIMITS.elapsedMs,catalogRecovery;
     const binding={intentHash:state.intentHash,targetStore:TARGET,projectId:owner.projectId,ownerHash:expected.ownerHash,planHash:plan.planHash,themeZipSha256:expected.themeZipSha256,packageBytesHash:state.intent.packageBytesHash};
-    await save(path.join(root,'binding.json'),{schemaVersion:1,kind:'molyvi_reference_preparation_installation',confirmation:expected,binding,limits:BASIC_REFERENCE_INSTALL_LIMITS,startedAt:new Date(started).toISOString(),deadlineAt:new Date(deadline).toISOString(),publicationAuthorized:false,newChargesAuthorized:false});
+    if(reviewedResume){
+      const resumed=await validateReviewedReferenceResume({root,state,review:reviewedResume,confirmation:expected,binding,limits:BASIC_REFERENCE_INSTALL_LIMITS});
+      Object.assign(counters,resumed.counters);({head,sequence,started,deadline,catalogRecovery}=resumed);
+      await save(path.join(root,'reviewed-resume.json'),reviewedResume);
+    }else await save(path.join(root,'binding.json'),{schemaVersion:1,kind:'molyvi_reference_preparation_installation',confirmation:expected,binding,limits:BASIC_REFERENCE_INSTALL_LIMITS,startedAt:new Date(started).toISOString(),deadlineAt:new Date(deadline).toISOString(),publicationAuthorized:false,newChargesAuthorized:false});
     async function storage(){
       let bytes=theme.zipBytes.length; // Count retained ZIP even though no copy is written here.
       async function walk(dir){for(const e of await fs.readdir(dir,{withFileTypes:true})){const f=path.join(dir,e.name),s=await fs.lstat(f);if(s.isSymbolicLink())fail('UNSAFE_STORAGE');if(s.isDirectory())await walk(f);else{if(!s.isFile()||s.nlink!==1)fail('UNSAFE_STORAGE');bytes+=s.size;if(bytes>BASIC_REFERENCE_INSTALL_LIMITS.ownedBytes-256*1024)fail('STORAGE_LIMIT');}}}
@@ -85,7 +91,7 @@ export async function installPreparedBasicReference({preparation,session,confirm
     };
     const external=async(url,init)=>{if(!['POST','GET'].includes(init?.method)||init.redirect!=='error')fail('REQUEST_SCOPE');init.signal?.throwIfAborted();await reserve(init.method==='POST'?'upload':'download');init.signal?.throwIfAborted();return uploadFetch(url,init);};
     const transport=createShopifyBasicTransport({referenceComposition,theme,binding,liveThemeId:LIVE,inventoryLocationId:LOCATION,accessToken,
-      fetchImpl:graphql,uploadFetch:external,decodeImage,networkEnabled:true,recordReadbackEvidence:async value=>{
+      fetchImpl:graphql,uploadFetch:external,decodeImage,catalogRecovery,networkEnabled:true,recordReadbackEvidence:async value=>{
         await storage();await save(path.join(root,`readback-${value.readRequestId}.json`),{intentHash:state.intentHash,key:value.key,attemptId:value.attemptId,remoteId:value.remoteId,readRequestId:value.readRequestId,sha256:hash(value)});
       }});
     const wrapped={...transport,...Object.fromEntries(['preflight','apply','readback'].map(key=>[key,track(transport[key])]))};
@@ -94,7 +100,7 @@ export async function installPreparedBasicReference({preparation,session,confirm
       let result=state;const steps=[];
       for(const step of state.intent.steps){
         if(Date.now()>=deadline)fail('DEADLINE');await onStep({phase:'before',key:step.key,kind:step.kind});const at=Date.now();
-        result=await runner.runStep({directory:location,context,key:step.key});steps.push({key:step.key,kind:step.kind,elapsedMs:Date.now()-at});
+        result=reviewedResume&&step.key===reviewedResume.key?await runner.reconcileStep({directory:location,context,key:step.key}):await runner.runStep({directory:location,context,key:step.key});steps.push({key:step.key,kind:step.kind,elapsedMs:Date.now()-at});
         if(result.waiting&&waitForKnownTheme)result=await settleKnownReferenceTheme({result,assertActive,readback:()=>runner.reconcileStep({directory:location,context,key:step.key}),onWaiting:w=>onStep({phase:'waiting',key:step.key,kind:step.kind,remoteId:w.remoteId})});
         await onStep({phase:'after',key:step.key,kind:step.kind});if(result.waiting)fail('KNOWN_THEME_WAITING');
       }

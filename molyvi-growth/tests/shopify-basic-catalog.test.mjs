@@ -110,7 +110,7 @@ test('readback derives all remote fields and detects changed title, body, option
     p=>p.title+='changed',p=>p.handle+='changed',p=>p.descriptionHtml+='changed',p=>p.vendor+='changed',p=>p.productType+='changed',p=>p.status='ACTIVE',p=>p.tags=[],
     p=>p.options[0].optionValues[0].name='wrong',p=>p.variants.nodes[0].sku='wrong',p=>p.variants.nodes[0].price='0.01',p=>p.variants.nodes[0].inventoryPolicy='CONTINUE',
     p=>p.variants.nodes[0].inventoryItem.tracked=false,p=>p.variants.nodes[0].inventoryItem.inventoryLevels.nodes[0].quantities[0].quantity=999,p=>p.variants.nodes[0].inventoryItem.measurement.weight.value=1,
-    p=>p.variants.nodes[2].inventoryItem.measurement.weight={unit:'GRAMS',value:0}
+    p=>p.variants.nodes[2].inventoryItem.measurement.weight={unit:'GRAMS',value:1}
   ];
   for(const change of changes){const {world,adapter,req}=await created();change(world.products[0]);await assert.rejects(adapter.readback(readReq(req)));assert.equal(world.mutations,1);}
 });
@@ -163,3 +163,6 @@ test('abort marks an apply attempt as sent even when the injected transport igno
   const world=mockWorld(),normal=world.fetch;world.fetch=(url,options)=>JSON.parse(options.body).query===operations.create?new Promise(()=>{}):normal(url,options);
   const adapter=transport(world),req=request();await adapter.preflight(req);const controller=new AbortController(),pending=adapter.apply(req,{signal:controller.signal});controller.abort();await reject(pending,'REQUEST_ABORTED');await reject(adapter.apply(req),'ATTEMPT_ALREADY_SENT');
 });
+
+test('omitted weight accepts only the platform zero default and keeps unknown in the receipt',async()=>{const{world,adapter,req}=await created();world.products[0].variants.nodes[2].inventoryItem.measurement.weight={unit:'KILOGRAMS',value:0};const result=await adapter.readback(readReq(req));assert.equal(result.observed.variants[2].weightGrams,null);});
+test('explicitly reviewed known catalog ID can reconcile without another create; altered scope is rejected',async()=>{const{world,req}=await created();const recovery={intentHash:f.binding.intentHash,key:req.step.key,attemptId:req.attemptId,remoteId:world.products[0].id.split('/').at(-1)};const restored=transport(world,{catalogRecovery:recovery});await restored.preflight({...req,mode:'reconcile'});assert.equal((await restored.readback({...readReq(req),mode:'reconcile'})).outcome,'found');await reject(restored.apply(req),'ATTEMPT_ALREADY_SENT');assert.equal(world.mutations,1);assert.throws(()=>transport(world,{catalogRecovery:{...recovery,intentHash:'e'.repeat(64)}}),{code:'SHOPIFY_BASIC_CATALOG_RECOVERY_BINDING'});const wrong=transport(world,{catalogRecovery:{...recovery,remoteId:'999'}});await reject(wrong.preflight(req),'HANDLE_ALREADY_EXISTS');});

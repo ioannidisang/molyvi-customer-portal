@@ -1,3 +1,4 @@
+import {matchesShopifyWeight} from './shopify-weight-readback.mjs';
 import crypto from 'node:crypto';
 import {canonicalJson,IntakeError} from './intake-store.mjs';
 import {createBasicInstallationSource} from './basic-installation-source.mjs';
@@ -95,14 +96,9 @@ function cents(value){
   if(minor>BigInt(Number.MAX_SAFE_INTEGER))fail('PRICE_NOT_EXACT_CENTS');
   return Number(minor);
 }
-function weightGrams(measurement){
-  if(!measurement||!Object.hasOwn(measurement,'weight'))fail('WEIGHT_READBACK_INVALID');
-  if(measurement.weight===null)return null;
-  const weight=measurement.weight;
-  // We submit integral GRAMS. A changed unit/value is an explicit mismatch, not
-  // an implicit conversion. Null is genuinely unknown and is never zero.
-  if(weight?.unit!=='GRAMS'||!Number.isSafeInteger(weight.value)||weight.value<0)fail('WEIGHT_READBACK_INVALID');
-  return weight.value;
+function weightGrams(measurement,expected){
+  if(!measurement||!Object.hasOwn(measurement,'weight')||!matchesShopifyWeight(measurement.weight,expected))fail('WEIGHT_READBACK_INVALID');
+  return expected; // null remains unknown, even when Shopify returns its zero default.
 }
 function connection(value,maximum,code){
   if(!value||value.pageInfo?.hasNextPage!==false||!Array.isArray(value.nodes)||value.nodes.length>maximum)fail(code);
@@ -118,11 +114,11 @@ function connection(value,maximum,code){
  * Tags and shipping requirement are checked in addition to the journal shape.
  * Local visual-unit/image-position identifiers are correlation metadata only:
  * this catalog receipt does NOT claim photographs have been installed/linked.
- * A missing source weight omits input measurement and requires actual null on
- * readback. If Shopify defaults it to zero, this adapter fails closed instead
- * of falsely certifying unknown weight as a measured zero.
+ * An omitted source weight remains unknown in the receipt. A zero returned
+ * by Shopify in a valid unit is recorded as its platform default, not a
+ * measured source weight. Any positive or malformed default fails closed.
  */
-export function createShopifyBasicCatalogTransport({prepared,referenceComposition,binding,liveThemeId,inventoryLocationId,accessToken,fetchImpl=globalThis.fetch,networkEnabled=false}={}){
+export function createShopifyBasicCatalogTransport({prepared,referenceComposition,binding,liveThemeId,inventoryLocationId,accessToken,fetchImpl=globalThis.fetch,networkEnabled=false,catalogRecovery}={}){
   const source=createBasicInstallationSource({prepared,referenceComposition});
   const {plan,uploads}=source,pinned=structuredClone(binding);
   if(!pinned||!equal(Object.keys(pinned).sort(),['intentHash','targetStore','projectId','ownerHash','planHash','themeZipSha256','packageBytesHash'].sort())
@@ -145,6 +141,11 @@ export function createShopifyBasicCatalogTransport({prepared,referenceCompositio
   const attempts=new Map(),preflights=new Map(),sentSteps=new Set();
   const snapshot=value=>{try{return structuredClone(value);}catch{fail('REQUEST_INVALID');}};
   const attemptKey=request=>`${request.step.key}:${request.attemptId??'before-claim'}`;
+  if(catalogRecovery){
+    const r=catalogRecovery;
+    if(r.intentHash!==pinned.intentHash||!plan.products.some(p=>r.key===`catalog:${p.productId}`)||!uuid(r.attemptId)||!numericId(`gid://shopify/Product/${r.remoteId}`,'Product'))fail('RECOVERY_BINDING');
+    attempts.set(`${r.key}:${r.attemptId}`,{remoteId:`gid://shopify/Product/${r.remoteId}`});sentSteps.add(r.key);
+  }
   function validate(request,{attemptRequired=false,readback=false}={}){
     if(!request||!equal(request.binding,pinned)||!equal(request.trustedShop,{shopId:SHOPIFY_BASIC_CATALOG_SHOP_ID,targetStore:SHOPIFY_BASIC_CATALOG_STORE}))fail('REQUEST_BINDING_MISMATCH');
     const entry=steps.get(request.step?.key);if(!entry||request.step?.kind!=='catalog')fail('UNSUPPORTED_STEP');
@@ -214,7 +215,7 @@ export function createShopifyBasicCatalogTransport({prepared,referenceCompositio
       if(!local||mapped.has(key))fail('VARIANT_MAPPING_MISMATCH');
       const levels=connection(item.inventoryLevels,1,'INVENTORY_LEVELS_MISMATCH');
       if(levels.length!==1||levels[0]?.location?.id!==gid('Location',inventoryLocationId)||!Array.isArray(levels[0].quantities)||levels[0].quantities.length!==1||levels[0].quantities[0]?.name!=='available'||!Number.isSafeInteger(levels[0].quantities[0].quantity)||levels[0].quantities[0].quantity<0)fail('INVENTORY_LEVELS_MISMATCH');
-      mapped.set(key,{localId:local.localId,remoteId,sku:variant.sku,optionValues,priceMinor:cents(variant.price),stock:levels[0].quantities[0].quantity,weightGrams:weightGrams(item.measurement),visualUnitId:local.visualUnitId,imagePosition:local.imagePosition,trackInventory:item.tracked,continueSellingWhenOutOfStock:variant.inventoryPolicy==='CONTINUE'});
+      mapped.set(key,{localId:local.localId,remoteId,sku:variant.sku,optionValues,priceMinor:cents(variant.price),stock:levels[0].quantities[0].quantity,weightGrams:weightGrams(item.measurement,local.weightGrams),visualUnitId:local.visualUnitId,imagePosition:local.imagePosition,trackInventory:item.tracked,continueSellingWhenOutOfStock:variant.inventoryPolicy==='CONTINUE'});
     }
     const observed={handle:product.handle,title:product.title,descriptionHtmlSha256:sha(product.descriptionHtml),vendor:product.vendor,productType:product.productType,optionNames:actualOptions.map(o=>o.name),status:product.status,channels:Array.from({length:product.resourcePublicationsCount.count}),currency:remote.currency,inventoryLocationId:data.location.id.split('/').at(-1),variants:step.expected.variants.map(local=>mapped.get(tuple(local.sku,local.optionValues)))};
     const comparable={...observed,variants:observed.variants.map(({remoteId,...fields})=>fields)};
